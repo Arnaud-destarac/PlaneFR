@@ -1,0 +1,7 @@
+{
+  "base_year": 2050,
+  "proj_year": null,
+  "scenario_name": null,
+  "extension_name": "imp_water",
+  "strategy": "embodied_in_import"
+}

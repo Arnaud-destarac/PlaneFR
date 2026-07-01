@@ -1,0 +1,48 @@
+{
+    "matmat": {
+        "version": "0.9.0-beta"
+    },
+    "environment": {
+        "python_version": "3.11.15",
+        "python_implementation": "CPython",
+        "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.35",
+        "hostname": "WKS-LNX-TEIXEIRA",
+        "user": "teixeiraa"
+    },
+    "run": {
+        "data_utc": "2026-05-14",
+        "time_utc": "08:38:49",
+        "datetime_utc": [
+            "2026-05-14T08:38:49+00:00"
+        ]
+    },
+    "workflow": {
+        "kind": "pipeline",
+        "name": "planefr",
+        "identity": {
+            "path_in": {
+                "exiobase_accounts": "/home/teixeiraa/Documents/01-data/04-derived_models/1-adapter/accounts/exiobase",
+                "local_accounts": "/home/teixeiraa/Documents/01-data/04-derived_models/1-adapter/accounts/local/1-transitions_2050",
+                "bridge": "/home/teixeiraa/Documents/01-data"
+            },
+            "path_out": "/home/teixeiraa/Documents/01-data/04-derived_models/2-pipeline/accounts/planefr/1-transitions_2050/3.10.2",
+            "export_format": [
+                "excel",
+                "pickle"
+            ],
+            "overwrite": false,
+            "base_year": 2015,
+            "proj_year": 2050,
+            "scenario_name": null,
+            "version": "3.10.2",
+            "system": "pxp",
+            "scenario_names": [
+                "TEND-None",
+                "S1-None",
+                "S2-None",
+                "S3-None",
+                "S4-None"
+            ]
+        }
+    }
+}

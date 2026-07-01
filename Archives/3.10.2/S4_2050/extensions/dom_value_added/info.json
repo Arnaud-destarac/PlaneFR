@@ -1,0 +1,7 @@
+{
+  "base_year": 2050,
+  "proj_year": null,
+  "scenario_name": null,
+  "extension_name": "dom_value_added",
+  "strategy": "gross_output_based"
+}

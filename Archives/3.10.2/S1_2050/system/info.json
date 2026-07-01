@@ -1,0 +1,6 @@
+{
+  "base_year": "2050",
+  "proj_year": 2050,
+  "scenario_name": "S1",
+  "strategy": "exo_invest_matrix"
+}
