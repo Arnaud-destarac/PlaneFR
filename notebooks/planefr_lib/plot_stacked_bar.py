@@ -108,14 +108,14 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
         unit_val = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, sp)
         ax.text(idx, 102, f"{total_val:.0f}{f' {unit_val}' if unit_val else ''}",
-                ha="center", va="bottom", fontweight="bold", fontsize=9)
+                ha="center", va="bottom", fontweight="bold", fontsize=10.5)
 
         if reference_data is not None and sp in reference_data:
             ref_total = reference_data[sp]["domestique"].sum() + reference_data[sp]["importé"].sum()
             if ref_total > 0:
                 variation_pct = (total_val - ref_total) / ref_total * 100
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
-                ax.text(idx, 97, text_var, ha="center", va="bottom", fontweight="bold", fontsize=8, color="black")
+                ax.text(idx, 97, text_var, ha="center", va="bottom", fontweight="bold", fontsize=11, color="black")
 
         threshold = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, sp, require_positive=True)
         if threshold is not None:
@@ -125,18 +125,19 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
             ax.text(idx, y_pos, f"{overshoot_pct:.1f}", ha="center", va="top",
                     fontweight="bold", fontsize=14, color=color)
 
-    ax.set_xlabel("PB-Footprints", fontsize=10, fontweight="bold")
-    ax.set_ylabel("Footprint share (%)", fontsize=10, fontweight="bold")
+    ax.set_ylabel("Footprint share (%)", fontsize=12, fontweight="bold")
     if scenario_name:
         ax.set_title(scenario_name, fontsize=12, fontweight="bold", pad=10)
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(subprocesses, rotation=45, ha="right", fontsize=9)
+    ax.set_xticklabels(subprocesses, rotation=30, ha="center", fontweight="bold", fontsize=10.5)
     ax.set_ylim(0, 110)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
 
     if show_legend:
         handles, labels = _build_category_legend(categories)
-        ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.05, 1), fontsize=8)
+        handles.append(Line2D([0], [0], marker="$2.5$", color="red", linestyle="None", markersize=13))
+        labels.append("Overshoot")
+        ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.05, 1), fontsize=13)
 
     if fig is not None:
         plt.tight_layout()
@@ -211,7 +212,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     n_lp = len(subprocesses)
 
     fig = plt.figure(figsize=(20, 14))
-    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.09, left=0.045, right=0.99)
+    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.1, left=0.045, right=0.99)
     positions = [(r, c) for r in range(3) for c in range(3)]
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
@@ -249,9 +250,17 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
         max_total = float(np.max(total_values)) if total_values.size else 0.0
 
+        pba_values = [
+            scenario_data[subprocess_name].get("pba") if subprocess_name in scenario_data else None
+            for scenario_data in all_scenarios_data
+        ]
+        finite_pba = [float(v) for v in pba_values if v is not None and np.isfinite(v)]
+        max_pba = max(finite_pba) if finite_pba else 0.0
+
         threshold_lb = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name, require_positive=True)
         threshold_ub = processing.lookup_seuil(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name, require_positive=True)
         floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if dls_df is not None else None
+        unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
 
         # Rupture d'axe si un seuil (bas et/ou haut) dépasse largement le max observé,
         # pour ne pas écraser les barres en zoomant sur un seuil très lointain.
@@ -295,14 +304,14 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
         if threshold_lb is not None:
             (ax_top if (use_break_lb and ax_top is not None) else ax).axhline(
-                y=threshold_lb, color="#0d9a33", linestyle="-", linewidth=4.5, label="LP", zorder=10)
+                y=threshold_lb, color="#0d9a33", linestyle="-", linewidth=3.7, label="LP", zorder=10)
         if threshold_ub is not None:
             (ax_top if (use_break_ub and ax_top is not None) else ax).axhline(
-                y=threshold_ub, color="#bc270a", linestyle="-", linewidth=4.5, label="LP (high-risk)", zorder=10)
+                y=threshold_ub, color="#bc270a", linestyle="-", linewidth=3.7, label="LP (high-risk)", zorder=10)
         if floor_ub is not None:
-            ax.axhline(y=floor_ub, color="cyan", linestyle="--", linewidth=4.5, label="DLS", zorder=10)
+            ax.axhline(y=floor_ub, color="cyan", linestyle="--", linewidth=3.7, label="DLS", zorder=10)
 
-        bottom_max = max(max_total, floor_ub or 0)
+        bottom_max = max(max_total, floor_ub or 0, max_pba)
         if threshold_lb is not None and not use_break_lb:
             bottom_max = max(bottom_max, threshold_lb)
         if threshold_ub is not None and not use_break_ub:
@@ -324,20 +333,46 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             ax_top.plot((-d, +d), (-d, +d), **kwargs)
             ax_top.plot((1 - d, 1 + d), (-d, +d), **kwargs)
 
-        for scenario_idx, total_val in enumerate(total_values):
-            if scenario_idx == reference_idx:
+        # PBA (production-based accounting) : croix noire en gras sur chaque barre,
+        # à comparer visuellement au sommet de la barre (CBA, consumption-based).
+        # Tracée avant les annotations texte pour que ces dernières, si elles se
+        # superposent à la croix, soient replacées au-dessus (cf. text_y ci-dessous).
+        for scenario_idx, pba_val in enumerate(pba_values):
+            if pba_val is None or not np.isfinite(pba_val):
                 continue
-            ref_total = total_values[reference_idx]
+            target_ax = ax_top if (use_break and ax_top is not None and pba_val > ax.get_ylim()[1]) else ax
+            target_ax.scatter(scenario_idx, pba_val, marker="X", s=140, color="black",
+                               linewidths=1.5, zorder=12)
+
+        ref_total = total_values[reference_idx]
+        # Superposition jugée réelle seulement si la croix est proche du total en
+        # distance absolue sur l'axe (pas juste "au-dessus", sinon un PBA très
+        # supérieur au total renverrait le texte tout en haut sans raison, alors
+        # qu'il reste de la place juste au-dessus de la barre).
+        overlap_threshold = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05
+        for scenario_idx, total_val in enumerate(total_values):
+            pba_val = pba_values[scenario_idx]
+            pba_on_ax = (
+                pba_val is not None and np.isfinite(pba_val)
+                and not (use_break and ax_top is not None and pba_val > ax.get_ylim()[1])
+            )
+            overlapping = pba_on_ax and abs(pba_val - total_val) < overlap_threshold
+            text_y = max(total_val, pba_val) if overlapping else total_val
+
+            if scenario_idx == reference_idx:
+                ax.text(scenario_idx, text_y * 1.01, f"{total_val:.0f}",
+                        ha="center", va="bottom", fontweight="bold", fontsize=15, color="black", zorder=13)
+                continue
             if ref_total > 0:
                 variation_pct = (total_val - ref_total) / ref_total * 100
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
-                ax.text(scenario_idx, total_val * 1.01, text_var,
-                        ha="center", va="bottom", fontweight="bold", fontsize=13, color="black")
+                var_color = "red" if variation_pct > 0 else ("green" if variation_pct < 0 else "black")
+                ax.text(scenario_idx, text_y * 1.01, text_var,
+                        ha="center", va="bottom", fontweight="bold", fontsize=15, color=var_color, zorder=13)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
             subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
 
-        unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
         ax.set_ylabel(unit_text or "Empreintes", fontsize=14, fontweight="bold")
 
         ax.set_xticks(x_pos)
@@ -354,11 +389,13 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     legend_labels.append("Lower Bound")
     legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
     legend_labels.append("Upper Bound")
+    legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
+    legend_labels.append("Production-based")
     if dls_df is not None:
         legend_handles.append(Line2D([0], [0], color="cyan", linestyle="--", linewidth=3))
         legend_labels.append("DLS")
 
-    fig.legend(legend_handles, legend_labels, loc="lower center", ncol=5, fontsize=13,
+    fig.legend(legend_handles, legend_labels, loc="lower center", ncol=5, fontsize=16,
                bbox_to_anchor=(0.5, 0.015), frameon=True, fancybox=True, shadow=True)
 
     fig.suptitle(
