@@ -144,10 +144,12 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
                                         facteurs_carac_df, bridge_matrices_df, seuils_df):
     """Empreinte (dom + imp, + F_Y le cas échéant) d'un sous-processus pour un LP
     et un scénario donnés, répartie par catégorie de consommation via la matrice
-    bridge. Brique de base de process_scenario()."""
+    bridge. Calcule aussi "pba" (production-based, F_x_dom + F_Y, une seule
+    valeur non répartie par catégorie). Brique de base de process_scenario()."""
     d_cba_imp = io.load_d_cba_k_france(scenario_folder_path, lp_name, origin="imp")
     d_cba_dom = io.load_d_cba_k_france(scenario_folder_path, lp_name, origin="dom")
     f_y_tot_df = io.load_f_y_tot_france(scenario_folder_path, lp_name)
+    f_x_dom_df = io.load_f_x_dom_france(scenario_folder_path, lp_name)
 
     if d_cba_imp is None or d_cba_dom is None:
         return None
@@ -166,6 +168,13 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
         if not f_y_tot_weighted.empty:
             f_y_tot_value = float(f_y_tot_weighted.sum())
 
+    # PBA (production-based accounting) : empreinte de production domestique
+    # (F_x_dom) + F_Y, mêmes facteurs et conversion que le CBA ci-dessous,
+    # mais sans répartition par catégorie ni par dom/imp (une seule valeur).
+    pba_raw = filter_and_weight_scalar(f_x_dom_df, extension_factor_map) if f_x_dom_df is not None else 0.0
+    if f_y_tot_value is not None:
+        pba_raw += f_y_tot_value
+
     # La bridge répartit par catégorie de consommation ; elle ne s'applique
     # qu'aux scénarios France (World/Europe restent un total agrégé unique).
     scen_name = str(scenario_folder_path.name)
@@ -182,6 +191,7 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
     if conversion_factor is not None:
         result_imp = result_imp / conversion_factor
         result_dom = result_dom / conversion_factor
+    pba_value = pba_raw / conversion_factor if conversion_factor else pba_raw
 
     # F_Y : émissions directes de la demande finale, ajoutées comme catégorie à
     # part entière (non répartie par la bridge, déjà rattachée à la conso finale).
@@ -197,6 +207,7 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
         "domestique": result_dom,
         "importé": result_imp,
         "categories": result_imp.index.tolist(),
+        "pba": pba_value,
     }
 
 
@@ -223,10 +234,12 @@ def process_scenario(scenario_folder_path, facteurs_carac_df, bridge_matrices_df
                     "domestique": result["domestique"].copy(),
                     "importé": result["importé"].copy(),
                     "categories": result["categories"],
+                    "pba": result["pba"],
                 }
             else:
                 aggregated["domestique"] = aggregated["domestique"].add(result["domestique"], fill_value=0)
                 aggregated["importé"] = aggregated["importé"].add(result["importé"], fill_value=0)
+                aggregated["pba"] += result["pba"]
 
         if aggregated is not None:
             aggregated["categories"] = colors.sort_categories(aggregated["importé"].index.tolist())
