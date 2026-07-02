@@ -212,7 +212,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     n_lp = len(subprocesses)
 
     fig = plt.figure(figsize=(20, 14))
-    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.1, left=0.045, right=0.99)
+    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.12, left=0.045, right=0.99)
     positions = [(r, c) for r in range(3) for c in range(3)]
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
@@ -335,40 +335,58 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
         # PBA (production-based accounting) : croix noire en gras sur chaque barre,
         # à comparer visuellement au sommet de la barre (CBA, consumption-based).
-        # Tracée avant les annotations texte pour que ces dernières, si elles se
-        # superposent à la croix, soient replacées au-dessus (cf. text_y ci-dessous).
+        pba_axes = [None] * n_scenarios
         for scenario_idx, pba_val in enumerate(pba_values):
             if pba_val is None or not np.isfinite(pba_val):
                 continue
             target_ax = ax_top if (use_break and ax_top is not None and pba_val > ax.get_ylim()[1]) else ax
+            pba_axes[scenario_idx] = target_ax
             target_ax.scatter(scenario_idx, pba_val, marker="X", s=140, color="black",
                                linewidths=1.5, zorder=12)
 
         ref_total = total_values[reference_idx]
-        # Superposition jugée réelle seulement si la croix est proche du total en
-        # distance absolue sur l'axe (pas juste "au-dessus", sinon un PBA très
-        # supérieur au total renverrait le texte tout en haut sans raison, alors
-        # qu'il reste de la place juste au-dessus de la barre).
-        overlap_threshold = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05
+        ref_pba = pba_values[reference_idx]
+        ax_margin = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02
+        # Superposition jugée réelle seulement si la croix PBA est sur le même axe
+        # que la barre (pas de conflit possible si elle est sur ax_top, au-delà de
+        # la rupture d'axe) ET proche du total en distance absolue sur l'axe.
+        overlap_threshold = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.1
+
         for scenario_idx, total_val in enumerate(total_values):
             pba_val = pba_values[scenario_idx]
-            pba_on_ax = (
-                pba_val is not None and np.isfinite(pba_val)
-                and not (use_break and ax_top is not None and pba_val > ax.get_ylim()[1])
+            pba_ax = pba_axes[scenario_idx]
+            overlapping = (
+                pba_ax is ax and pba_val is not None and np.isfinite(pba_val)
+                and abs(pba_val - total_val) < overlap_threshold
             )
-            overlapping = pba_on_ax and abs(pba_val - total_val) < overlap_threshold
-            text_y = max(total_val, pba_val) if overlapping else total_val
+            cba_y, cba_va = (pba_val - ax_margin, "top") if overlapping else (total_val + ax_margin, "bottom")
 
             if scenario_idx == reference_idx:
-                ax.text(scenario_idx, text_y * 1.01, f"{total_val:.0f}",
-                        ha="center", va="bottom", fontweight="bold", fontsize=15, color="black", zorder=13)
-                continue
-            if ref_total > 0:
+                ax.text(scenario_idx, cba_y, f"{total_val:.0f}",
+                        ha="center", va=cba_va, fontweight="bold", fontsize=15, color="black", zorder=13)
+            elif ref_total > 0:
                 variation_pct = (total_val - ref_total) / ref_total * 100
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
                 var_color = "red" if variation_pct > 0 else ("green" if variation_pct < 0 else "black")
-                ax.text(scenario_idx, text_y * 1.01, text_var,
-                        ha="center", va="bottom", fontweight="bold", fontsize=15, color=var_color, zorder=13)
+                ax.text(scenario_idx, cba_y, text_var,
+                        ha="center", va=cba_va, fontweight="bold", fontsize=15, color=var_color, zorder=13)
+
+            # Texte PBA (total pour la référence, variation relative à la
+            # référence pour les autres), toujours au-dessus de la croix.
+            if pba_val is None or not np.isfinite(pba_val) or pba_ax is None:
+                continue
+            pba_margin = (pba_ax.get_ylim()[1] - pba_ax.get_ylim()[0]) * 0.02
+            pba_y = pba_val + pba_margin
+
+            if scenario_idx == reference_idx:
+                pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
+                            ha="center", va="bottom", fontweight="bold", fontsize=13, color= "black", zorder=13)
+            elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
+                pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
+                pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
+                pba_var_color = "lightcoral" if pba_variation_pct > 0 else ("lightgreen" if pba_variation_pct < 0 else "black")
+                pba_ax.text(scenario_idx, pba_y, pba_text_var,
+                            ha="center", va="bottom", fontweight="bold", fontsize=13, color=pba_var_color, zorder=13)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
             subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
