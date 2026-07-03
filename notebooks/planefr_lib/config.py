@@ -38,7 +38,7 @@ SEUILS_FILE = DATA_DIR / "seuils.xlsx"
 REFERENCE_SCENARIO_IDX = 0
 
 
-def get_scenario_folders(exclude_2019=True):
+def get_scenario_folders(exclude_2019=False, exclude_others=False):
     """Liste les dossiers de scénarios présents dans BASE_DATA_DIR, triés par nom.
 
     Args:
@@ -54,6 +54,8 @@ def get_scenario_folders(exclude_2019=True):
     folders = [d for d in BASE_DATA_DIR.iterdir() if d.is_dir()]
     if exclude_2019:
         folders = [d for d in folders if "2019" not in d.name]
+    if exclude_others:
+        folders = [d for d in folders if "2019" in d.name]
     return sorted(folders)
 
 
