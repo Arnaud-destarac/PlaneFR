@@ -40,7 +40,8 @@ def _build_category_legend(categories):
 
 
 def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
-                              scenario_name="", reference_data=None, ax=None, show_legend=True):
+                              scenario_name="", reference_data=None, ax=None, show_legend=True,
+                              group_by_category=True):
     """Barres empilées en % représentant les LP par sous-processus : dom (plein) +
     imp (hachuré) empilés par catégorie de consommation. Annote le total absolu,
     la variation relative au scénario de référence (si fourni), et le dépassement
@@ -53,6 +54,9 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
         reference_data: data_by_subprocess d'un scénario de référence, pour afficher
             la variation relative (omettre pour le scénario de référence lui-même)
         ax: axe matplotlib existant ; si None, une nouvelle figure est créée
+        group_by_category: True (défaut) pour empiler dom/imp l'un après l'autre pour
+            chaque catégorie (cat1-dom, cat1-imp, cat2-dom, cat2-imp, ...) ; False pour
+            regrouper par origine (toutes les catégories dom, puis toutes les catégories imp)
 
     Returns:
         (fig, ax) si ax=None a été fourni en entrée, sinon (None, ax).
@@ -89,19 +93,24 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
     for category in categories:
         total_values += heights_for("domestique", category) + heights_for("importé", category)
 
-    bottom_heights = np.zeros(n_subprocesses)
-    for cat_idx, category in enumerate(categories):
+    def draw_segment(category, cat_idx, key, bottom_heights, hatch=None):
         color_dark = colors.get_dark_shade(colors.get_category_color(category, cat_idx))
+        label_suffix = "Import" if hatch else "Domestic"
+        heights_pct = np.where(total_values > 0, heights_for(key, category) / total_values * 100, 0)
+        ax.bar(x_pos, heights_pct, bar_width, label=f"{category} - {label_suffix}",
+               bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch=hatch)
+        return heights_pct
 
-        heights_dom_pct = np.where(total_values > 0, heights_for("domestique", category) / total_values * 100, 0)
-        ax.bar(x_pos, heights_dom_pct, bar_width, label=f"{category} - Domestic",
-               bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5)
-        bottom_heights += heights_dom_pct
-
-        heights_imp_pct = np.where(total_values > 0, heights_for("importé", category) / total_values * 100, 0)
-        ax.bar(x_pos, heights_imp_pct, bar_width, label=f"{category} - Import",
-               bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch="/")
-        bottom_heights += heights_imp_pct
+    bottom_heights = np.zeros(n_subprocesses)
+    if group_by_category:
+        for cat_idx, category in enumerate(categories):
+            bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
+            bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
+    else:
+        for cat_idx, category in enumerate(categories):
+            bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
+        for cat_idx, category in enumerate(categories):
+            bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
 
     for idx, total_val in enumerate(total_values):
         sp = subprocesses[idx]
@@ -145,9 +154,13 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
     return (fig, ax) if fig is not None else (None, ax)
 
 
-def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names):
+def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
+                             group_by_category=True):
     """Grille de create_stacked_bar_chart pour tous les scénarios (2 colonnes,
     autant de lignes que nécessaire), avec légende et titre communs.
+
+    Args:
+        group_by_category: voir create_stacked_bar_chart
 
     Returns:
         (fig, axes_list)
@@ -174,7 +187,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
             all_scenarios_data[scenario_idx], seuils_df, subprocess_to_lp_list[scenario_idx],
             scenario_name=scenario_names[scenario_idx],
             reference_data=None if is_reference else reference_data,
-            ax=ax, show_legend=False,
+            ax=ax, show_legend=False, group_by_category=group_by_category,
         )
 
     all_categories = set()
@@ -197,12 +210,16 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
     return fig, axes_list
 
 
-def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names, dls_df=None):
+def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
+                                   dls_df=None, group_by_category=True):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
     environnemental (LP, LP high-risk) et le plancher social (DLS) s'ils existent,
     avec rupture d'axe automatique quand le plafond haut dépasse largement le
     maximum observé.
+
+    Args:
+        group_by_category: voir create_stacked_bar_chart
 
     Returns:
         (fig, axes_list)
@@ -288,19 +305,24 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             ax_top.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
         # DEUXIÈME PASSE : barres empilées en valeurs absolues
-        bottom_heights = np.zeros(n_scenarios)
-        for cat_idx, category in enumerate(categories):
-            heights_dom = np.array([heights_for(sd, "domestique", category) for sd in all_scenarios_data])
-            heights_imp = np.array([heights_for(sd, "importé", category) for sd in all_scenarios_data])
+        def draw_segment(category, cat_idx, key, bottom_heights, hatch=None):
             color_dark = colors.get_dark_shade(colors.get_category_color(category, cat_idx))
+            label_suffix = "Import" if hatch else "Domestic"
+            heights = np.array([heights_for(sd, key, category) for sd in all_scenarios_data])
+            ax.bar(x_pos, heights, bar_width, label=f"{category} - {label_suffix}",
+                   bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch=hatch)
+            return heights
 
-            ax.bar(x_pos, heights_dom, bar_width, label=f"{category} - Domestic",
-                   bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5)
-            bottom_heights += heights_dom
-
-            ax.bar(x_pos, heights_imp, bar_width, label=f"{category} - Import",
-                   bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch="/")
-            bottom_heights += heights_imp
+        bottom_heights = np.zeros(n_scenarios)
+        if group_by_category:
+            for cat_idx, category in enumerate(categories):
+                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
+                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
+        else:
+            for cat_idx, category in enumerate(categories):
+                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
+            for cat_idx, category in enumerate(categories):
+                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
 
         if threshold_lb is not None:
             (ax_top if (use_break_lb and ax_top is not None) else ax).axhline(
@@ -417,7 +439,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                bbox_to_anchor=(0.5, 0.015), frameon=True, fancybox=True, shadow=True)
 
     fig.suptitle(
-        "Multi PB-footprint assessment of French NZE Scenarios",
+        "PB-footprints assessment of French NZE Scenarios",
         fontsize=16, fontweight="bold", y=0.98,
     )
 

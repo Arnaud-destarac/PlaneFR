@@ -116,8 +116,8 @@ def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value
     liseré sombre pour rester lisible sur le dégradé) — utilisé uniquement
     quand show_value_labels=True dans create_overshoot_safe_space_figure.
     """
-    sc = ax.scatter(rel_x, y_pos, s=120, marker="o", facecolor=style["face"],
-                     edgecolor=style["edge"], linewidth=1.5, zorder=10)
+    sc = ax.scatter(rel_x, y_pos, s=300, marker="o", facecolor=style["face"],
+                     edgecolor=style["edge"], linewidth=1.5, zorder=2)
     if hatched:
         sc.set_hatch("///")
         if hatch_color is not None:
@@ -126,7 +126,7 @@ def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value
     if value_label is not None:
         x_span = ax.get_xlim()[1] - ax.get_xlim()[0]
         txt = ax.text(rel_x + x_span * 0.015, y_pos, value_label, color=style["face"],
-                       fontsize=8.2, ha="left", va="center", zorder=11, clip_on=False)
+                       fontsize=8.2, ha="left", va="center", zorder=11, clip_on=True)
         txt.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#2b2b2b")])
 
 
@@ -139,7 +139,7 @@ def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
     ub_color="#bc270a", x_main_max=5.0,
-    show_pba=False, show_value_labels=False,
+    show_pba=False, show_value_labels=True,
     title="Overshoot relative to the Safe Operating Space",
 ):
     """Figure multi-LP de type Overshoot / Safe Operating Space.
@@ -341,7 +341,7 @@ def create_overshoot_safe_space_figure(
         ]
 
     fig.legend(handles=legend_handles, loc="lower center", ncol=min(8, len(legend_handles)),
-               bbox_to_anchor=(0.5, -0.01), frameon=False, fontsize=9)
+               bbox_to_anchor=(0.5, -0.01), frameon=False, fontsize=13)
     fig.suptitle(title, fontsize=15, fontweight="bold", y=0.995)
     plt.tight_layout(rect=[0.10, 0.06, 0.98, 0.93])
     return fig
