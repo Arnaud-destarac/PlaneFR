@@ -29,6 +29,17 @@ from matplotlib.patches import Circle
 
 from . import colors, config, processing
 
+# Taille de police des graduations d'axe X en "nL" (ex: 1L, 2L... 7L, 8L...),
+# partagée par l'axe principal et l'axe de rupture pour qu'ils restent identiques.
+AXIS_TICK_LABEL_FONTSIZE = 13
+
+# title_above_bar=True uniquement — hauteur (fraction de hauteur de barre)
+# occupée par les 2 lignes du titre (nom + unité) + l'espace entre elles, à
+# fontsize=13. Sert à dimensionner automatiquement `hspace` (l'espace entre
+# barres) à partir des deux écarts réglables title_gap_below_bar/
+# title_gap_above_bar, pour que le titre ait toujours la place de tenir.
+TITLE_BLOCK_HEIGHT = 0.35
+
 # ============================================================================
 # HELPERS DE FORMATAGE ET DE CALCUL
 # ============================================================================
@@ -103,7 +114,7 @@ def _set_break_axis_ticks(ax_ext):
             ticks.append(int_max)
 
     ax_ext.set_xticks(ticks)
-    ax_ext.set_xticklabels([f"{t}L" for t in ticks], fontsize=8, fontweight="bold")
+    ax_ext.set_xticklabels([f"{t}L" for t in ticks], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
 
 
 def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value_label=None):
@@ -130,6 +141,31 @@ def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value
         txt.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#2b2b2b")])
 
 
+def _draw_lp_title_above(ax, name, unit_text, ceiling, gap_below_bar, gap_above_bar, fontsize=13):
+    """Affiche le nom du LP au-dessus de la barre, aligné à gauche sur le début
+    de l'axe (x=0), au lieu du libellé habituel dans la marge de gauche.
+    L'unité, si présente, est systématiquement affichée sur une seconde ligne
+    en-dessous du nom.
+
+    Les deux lignes sont ancrées indépendamment, pour que chaque écart soit
+    réglable sans affecter l'autre :
+      - l'unité (ou le nom, s'il n'y a pas d'unité) est ancrée par le bas
+        (va="bottom") à `gap_below_bar` au-dessus de la barre qu'elle nomme
+        (y=1.0 = haut de cette barre) — "collée" à la barre par défaut ;
+      - le nom est ancré par le haut (va="top") à `gap_above_bar` en-dessous de
+        `ceiling`, la limite haute disponible pour cette ligne (typiquement le
+        bas de la barre du dessus — cf. appelant).
+    """
+    if unit_text:
+        ax.text(0.0, 1.0 + gap_below_bar, f"({unit_text})", transform=ax.transAxes, ha="left", va="bottom",
+                fontsize=fontsize, color="#4a4a4a", clip_on=False)
+        ax.text(0.0, ceiling - gap_above_bar, name, transform=ax.transAxes, ha="left", va="top",
+                fontsize=fontsize, fontweight="bold", clip_on=False)
+    else:
+        ax.text(0.0, 1.0 + gap_below_bar, name, transform=ax.transAxes, ha="left", va="bottom",
+                fontsize=fontsize, fontweight="bold", clip_on=False)
+
+
 # ============================================================================
 # FIGURE PRINCIPALE
 # ============================================================================
@@ -140,6 +176,8 @@ def create_overshoot_safe_space_figure(
     threshold_lb_row, threshold_ub_row, unit_row,
     ub_color="#bc270a", x_main_max=5.0,
     show_pba=False, show_value_labels=True,
+    title_above_bar=False,
+    title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
 ):
     """Figure multi-LP de type Overshoot / Safe Operating Space.
@@ -160,6 +198,19 @@ def create_overshoot_safe_space_figure(
             une seconde bulle hachurée (production-based accounting).
         show_value_labels: si True, affiche la valeur absolue à côté de chaque
             bulle (uniquement utilisé par la figure en valeurs absolues).
+        title_above_bar: si False (défaut), nom du LP + unité affichés dans la
+            marge de gauche, comme avant. Si True, affichés au-dessus de la
+            barre, alignés à gauche sur son début (x=0), unité systématiquement
+            sur une seconde ligne sous le nom. La marge de gauche de la figure
+            est alors réduite au minimum puisque les titres n'y occupent plus
+            de place (le début des barres redevient l'élément le plus à gauche).
+        title_gap_below_bar: (title_above_bar=True uniquement) écart, en
+            fraction de hauteur de barre, entre le titre et la barre qu'il
+            nomme (en-dessous) — plus la valeur est petite, plus le titre est
+            "collé" à sa barre.
+        title_gap_above_bar: (title_above_bar=True uniquement) écart, en
+            fraction de hauteur de barre, entre le titre et la barre du dessus
+            (ou, pour la 1ère barre, les graduations de l'axe X partagé).
 
     Returns:
         matplotlib.figure.Figure
@@ -175,8 +226,12 @@ def create_overshoot_safe_space_figure(
     y_levels = np.linspace(0.82, 0.18, len(scenario_names)) if len(scenario_names) > 1 else np.array([0.5])
     scenario_to_y = dict(zip(scenario_names, y_levels))
 
-    fig = plt.figure(figsize=(18, max(8, 1.2 * n_lp + 1.8)))
-    gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=0.12, wspace=0.02)
+    row_height_factor = 1.35 if title_above_bar else 1.2
+    # hspace dimensionné pour que le bloc de titre (nom + unité) tienne
+    # toujours entre les deux écarts demandés, quels que soient leurs réglages.
+    hspace = (title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar else 0.12
+    fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
+    gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
     top_main_ax = None
 
@@ -259,12 +314,12 @@ def create_overshoot_safe_space_figure(
             ax_ext.set_visible(False)
 
         # Traits + valeurs des limites (indépendants du dégradé de fond)
-        ax.axvline(1, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=2.2, zorder=3)
-        ax.text(1, 0.93, _fmt_abs(lb_val), color="#0d9a33", fontsize=8.3, fontweight="bold",
+        ax.axvline(1, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
+        ax.text(1, 0.93, _fmt_abs(lb_val), color="#0d9a33", fontsize=11, fontweight="bold",
                 ha="center", va="bottom", zorder=5)
         if ub_rel is not None and ub_rel <= x_main_max:
-            ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=2.2, zorder=3)
-            ax.text(ub_rel, 0.93, _fmt_abs(ub_val), color=ub_color, fontsize=8.3, fontweight="bold",
+            ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
+            ax.text(ub_rel, 0.93, _fmt_abs(ub_val), color=ub_color, fontsize=11, fontweight="bold",
                     ha="center", va="bottom", zorder=5)
 
         # Bulles CBA (pleines) + PBA (hachurées, si show_pba)
@@ -282,12 +337,20 @@ def create_overshoot_safe_space_figure(
                              hatch_color=hatch_color,
                              value_label=_fmt_abs(p["abs_pba"]) if show_value_labels else None)
 
-        # Nom du LP + unité
-        ax.text(-0.03, 0.57, subprocess_name, transform=ax.transAxes, ha="right", va="center",
-                fontsize=11, fontweight="bold")
-        if unit_text:
-            ax.text(-0.03, 0.39, f"({unit_text})", transform=ax.transAxes, ha="right", va="center",
-                    fontsize=9, color="#4a4a4a")
+        # Nom du LP + unité : dans la marge de gauche (défaut), ou au-dessus
+        # de la barre (title_above_bar=True). `ceiling` (= 1.0 + hspace, le bas
+        # de la barre du dessus) est la même formule pour toutes les lignes, y
+        # compris la 1ère : hspace est dimensionné (cf. plus haut) pour laisser
+        # aussi la place aux graduations de l'axe X partagé au-dessus d'elle.
+        if title_above_bar:
+            _draw_lp_title_above(ax, subprocess_name, unit_text, 1.0 + hspace,
+                                  title_gap_below_bar, title_gap_above_bar)
+        else:
+            ax.text(-0.03, 0.57, subprocess_name, transform=ax.transAxes, ha="right", va="center",
+                    fontsize=13, fontweight="bold")
+            if unit_text:
+                ax.text(-0.03, 0.39, f"({unit_text})", transform=ax.transAxes, ha="right", va="center",
+                        fontsize=13, color="#4a4a4a")
 
         # Habillage épuré
         for axis in (ax, ax_ext):
@@ -304,20 +367,24 @@ def create_overshoot_safe_space_figure(
         if row_idx != 0:
             ax.tick_params(axis="x", labeltop=False, top=False)
         if use_break and ax_ext.get_visible():
-            ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=8, length=3, pad=2)
+            ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
 
     # Axe X principal commun (1L, 2L, 3L...) + labels de zone, sur la 1ère ligne
     if top_main_ax is not None:
         top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
-        top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=10, fontweight="bold")
+        top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
         top_main_ax.spines["top"].set_position(("outward", 8))
-        top_main_ax.tick_params(axis="x", pad=8, length=5)
+        # labelsize (contrairement à fontsize passé à set_xticklabels) reste
+        # appliqué même si l'axe régénère ses labels suite au déplacement de
+        # spine ci-dessus + à plt.tight_layout() en fin de fonction.
+        top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
+        zone_label_y = (1.0 + hspace + 0.15) if title_above_bar else 1.44
         for txt, color, x_pos in [
             ("Safe Operating Space", "#0b7d3e", 0.00),
             ("Increasing Risk", "#d47818", 0.20),
             ("High-Risk Zone", "#7a1f54", 0.40),
         ]:
-            top_main_ax.text(x_pos, 1.44, txt, transform=top_main_ax.transAxes, color=color,
+            top_main_ax.text(x_pos, zone_label_y, txt, transform=top_main_ax.transAxes, color=color,
                               fontsize=11, fontweight="bold", ha="left")
 
     # Légende : scénarios + limites, et type de comptabilité si show_pba
@@ -325,12 +392,12 @@ def create_overshoot_safe_space_figure(
         Line2D([0], [0], marker="o", linestyle="",
                markerfacecolor=scenario_style.get(n, {"face": "#b7c4d3"})["face"],
                markeredgecolor=scenario_style.get(n, {"edge": "#44505c"})["edge"],
-               markeredgewidth=1.3, markersize=8, label=n)
+               markeredgewidth=1.3, markersize=15, label=n)
         for n in scenario_names
     ]
     limit_handles = [
-        Line2D([0], [0], color="#0d9a33", linewidth=2.2, label="Lower Bound"),
-        Line2D([0], [0], color=ub_color, linewidth=2.2, label="Upper Bound"),
+        Line2D([0], [0], color="#0d9a33", linewidth=3.5, label="Lower Bound"),
+        Line2D([0], [0], color=ub_color, linewidth=3.5, label="Upper Bound"),
     ]
     legend_handles = scenario_handles + limit_handles
     if show_pba:
@@ -342,6 +409,14 @@ def create_overshoot_safe_space_figure(
 
     fig.legend(handles=legend_handles, loc="lower center", ncol=min(8, len(legend_handles)),
                bbox_to_anchor=(0.5, -0.01), frameon=False, fontsize=13)
-    fig.suptitle(title, fontsize=15, fontweight="bold", y=0.995)
-    plt.tight_layout(rect=[0.10, 0.06, 0.98, 0.93])
+    fig.suptitle(title, fontsize=17, fontweight="bold", y=0.995)
+    left_rect = 0.03 if title_above_bar else 0.10
+    top_rect = 0.90 if title_above_bar else 0.93
+    plt.tight_layout(rect=[left_rect, 0.06, 0.98, top_rect])
+    if top_main_ax is not None:
+        # tight_layout() régénère les labels de l'axe principal (spine
+        # déplacée plus haut) et leur fait perdre le gras appliqué via
+        # set_xticklabels ; on le réapplique donc en tout dernier.
+        plt.setp(top_main_ax.get_xticklabels(), fontweight="bold")
+
     return fig

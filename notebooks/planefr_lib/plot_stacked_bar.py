@@ -136,7 +136,7 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
     ax.set_ylabel("Footprint share (%)", fontsize=12, fontweight="bold")
     if scenario_name:
-        ax.set_title(scenario_name, fontsize=12, fontweight="bold", pad=10)
+        ax.set_title(f"{scenario_name} - Consumption-based", fontsize=12, fontweight="bold", pad=10)
     ax.set_xticks(x_pos)
     ax.set_xticklabels(subprocesses, rotation=30, ha="center", fontweight="bold", fontsize=10.5)
     ax.set_ylim(0, 110)
@@ -211,7 +211,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
 
 
 def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
-                                   dls_df=None, group_by_category=True):
+                                   dls_df=None, group_by_category=True, show_pba=True, show_dls=True):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
     environnemental (LP, LP high-risk) et le plancher social (DLS) s'ils existent,
@@ -220,6 +220,12 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
     Args:
         group_by_category: voir create_stacked_bar_chart
+        show_pba: True (défaut) pour afficher la croix production-based (PBA)
+            et ses annotations sur chaque barre ; False pour les masquer
+            entièrement (barres, texte, légende).
+        show_dls: True (défaut) pour afficher le plancher social (DLS) quand
+            dls_df fournit une valeur pour le LP ; False pour l'ignorer même
+            si dls_df est fourni.
 
     Returns:
         (fig, axes_list)
@@ -229,7 +235,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     n_lp = len(subprocesses)
 
     fig = plt.figure(figsize=(20, 14))
-    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.12, left=0.045, right=0.99)
+    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.9, bottom=0.12, left=0.045, right=0.99)
     positions = [(r, c) for r in range(3) for c in range(3)]
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
@@ -267,16 +273,20 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
         max_total = float(np.max(total_values)) if total_values.size else 0.0
 
-        pba_values = [
-            scenario_data[subprocess_name].get("pba") if subprocess_name in scenario_data else None
-            for scenario_data in all_scenarios_data
-        ]
-        finite_pba = [float(v) for v in pba_values if v is not None and np.isfinite(v)]
-        max_pba = max(finite_pba) if finite_pba else 0.0
+        if show_pba:
+            pba_values = [
+                scenario_data[subprocess_name].get("pba") if subprocess_name in scenario_data else None
+                for scenario_data in all_scenarios_data
+            ]
+            finite_pba = [float(v) for v in pba_values if v is not None and np.isfinite(v)]
+            max_pba = max(finite_pba) if finite_pba else 0.0
+        else:
+            pba_values = [None] * n_scenarios
+            max_pba = 0.0
 
         threshold_lb = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name, require_positive=True)
         threshold_ub = processing.lookup_seuil(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name, require_positive=True)
-        floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if dls_df is not None else None
+        floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if (show_dls and dls_df is not None) else None
         unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
 
         # Rupture d'axe si un seuil (bas et/ou haut) dépasse largement le max observé,
@@ -402,21 +412,20 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
             if scenario_idx == reference_idx:
                 pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
-                            ha="center", va="bottom", fontweight="bold", fontsize=13, color= "black", zorder=13)
+                            ha="center", va="bottom", fontweight="bold", fontsize=15, color= "black", zorder=13)
             elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
                 pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
                 pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
                 pba_var_color = "lightcoral" if pba_variation_pct > 0 else ("lightgreen" if pba_variation_pct < 0 else "black")
                 pba_ax.text(scenario_idx, pba_y, pba_text_var,
-                            ha="center", va="bottom", fontweight="bold", fontsize=13, color=pba_var_color, zorder=13)
+                            ha="center", va="bottom", fontweight="bold", fontsize=15, color=pba_var_color, zorder=13)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
             subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
 
         ax.set_ylabel(unit_text or "Empreintes", fontsize=14, fontweight="bold")
 
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels([s for s in scenario_names], rotation=0, ha="center", fontsize=10)
+        ax.set_xticks([])
         ax.grid(axis="y", alpha=0.3, linestyle="--")
 
     for idx in range(n_lp, len(positions)):
@@ -429,9 +438,10 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     legend_labels.append("Lower Bound")
     legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
     legend_labels.append("Upper Bound")
-    legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
-    legend_labels.append("Production-based")
-    if dls_df is not None:
+    if show_pba:
+        legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
+        legend_labels.append("Production-based")
+    if show_dls and dls_df is not None:
         legend_handles.append(Line2D([0], [0], color="cyan", linestyle="--", linewidth=3))
         legend_labels.append("DLS")
 
@@ -439,8 +449,10 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                bbox_to_anchor=(0.5, 0.015), frameon=True, fancybox=True, shadow=True)
 
     fig.suptitle(
-        "PB-footprints assessment of French NZE Scenarios",
+        "Planetary boundaries assessment of French NZE Scenarios",
         fontsize=16, fontweight="bold", y=0.98,
     )
+    caption = "Scenario order : " + " → ".join(scenario_names)
+    fig.text(0.5, 0.94, caption, ha="center", fontsize=15, style="italic", color="#333333")
 
     return fig, axes_list
