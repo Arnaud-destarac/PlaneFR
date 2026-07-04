@@ -509,7 +509,7 @@ def create_radial_synthesis_figure(
                 continue
             text, color = _annotate(val, ref_by_slot[i], is_ref_by_slot[i], is_pba_by_slot[i])
             ax.text(theta, r_ring_mid, text, ha="center", va="center",
-                    fontsize=12, fontweight="bold", color=color, zorder=9)
+                    fontsize=14.5, fontweight="bold", color=color, zorder=9)
 
         if info["ub_rel"] is not None:
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
@@ -524,7 +524,7 @@ def create_radial_synthesis_figure(
         bisector = geo["boundaries"][lp_idx] + geo["wedge_span"] / 2
         label = f"{info['name']}\n({info['unit']})" if info["unit"] else info["name"]
         txt = ax.text(bisector, r_label, label, ha="center", va="center",
-                       fontsize=14, fontweight="bold", color=info["color"], linespacing=1.4,
+                       fontsize=16.5, fontweight="bold", color=info["color"], linespacing=1.4,
                        rotation=_tangential_rotation_deg(bisector), rotation_mode="anchor", zorder=9)
         txt.set_path_effects([pe.withStroke(linewidth=3, foreground="white")])
 
