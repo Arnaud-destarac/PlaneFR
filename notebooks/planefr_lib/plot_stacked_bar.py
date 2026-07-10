@@ -41,7 +41,7 @@ def _build_category_legend(categories):
 
 def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                               scenario_name="", reference_data=None, ax=None, show_legend=True,
-                              group_by_category=True):
+                              group_by_category=True, sharing_principle=None, pop_df=None):
     """Barres empilées en % représentant les LP par sous-processus : dom (plein) +
     imp (hachuré) empilés par catégorie de consommation. Annote le total absolu,
     la variation relative au scénario de référence (si fourni), et le dépassement
@@ -57,6 +57,13 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
         group_by_category: True (défaut) pour empiler dom/imp l'un après l'autre pour
             chaque catégorie (cat1-dom, cat1-imp, cat2-dom, cat2-imp, ...) ; False pour
             regrouper par origine (toutes les catégories dom, puis toutes les catégories imp)
+        sharing_principle: si fourni ("Equality 2050"/"Equality 2100"/"Equality 2019"),
+            le seuil bas (LB) est recalculé à la volée par un partage égal per capita du
+            budget mondial pour la période de référence associée (voir
+            config.SHARING_PRINCIPLE_POPULATION_ROW et processing.compute_sharing_seuil),
+            au lieu d'être lu statiquement dans seuils_df. Nécessite pop_df.
+        pop_df: feuille "Population" de seuils.xlsx (io.load_population_df) -- requis
+            seulement si sharing_principle est fourni.
 
     Returns:
         (fig, ax) si ax=None a été fourni en entrée, sinon (None, ax).
@@ -126,7 +133,8 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
                 ax.text(idx, 97, text_var, ha="center", va="bottom", fontweight="bold", fontsize=11, color="black")
 
-        threshold = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, sp, require_positive=True)
+        threshold = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, sp,
+                                                 pop_df=pop_df, sharing_principle=sharing_principle)
         if threshold is not None:
             overshoot_pct = total_val / threshold
             color = "red" if overshoot_pct > 1 else "lightgreen"
@@ -155,12 +163,13 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
 
 def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
-                             group_by_category=True):
+                             group_by_category=True, sharing_principle=None, pop_df=None):
     """Grille de create_stacked_bar_chart pour tous les scénarios (2 colonnes,
     autant de lignes que nécessaire), avec légende et titre communs.
 
     Args:
         group_by_category: voir create_stacked_bar_chart
+        sharing_principle, pop_df: voir create_stacked_bar_chart
 
     Returns:
         (fig, axes_list)
@@ -188,6 +197,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
             scenario_name=scenario_names[scenario_idx],
             reference_data=None if is_reference else reference_data,
             ax=ax, show_legend=False, group_by_category=group_by_category,
+            sharing_principle=sharing_principle, pop_df=pop_df,
         )
 
     all_categories = set()
@@ -211,7 +221,8 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
 
 
 def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
-                                   dls_df=None, group_by_category=True, show_pba=True, show_dls=True):
+                                   dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
+                                   sharing_principle=None, pop_df=None):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
     environnemental (LP, LP high-risk) et le plancher social (DLS) s'ils existent,
@@ -226,6 +237,8 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         show_dls: True (défaut) pour afficher le plancher social (DLS) quand
             dls_df fournit une valeur pour le LP ; False pour l'ignorer même
             si dls_df est fourni.
+        sharing_principle, pop_df: voir create_stacked_bar_chart -- s'appliquent
+            ici à threshold_lb ET threshold_ub.
 
     Returns:
         (fig, axes_list)
@@ -284,8 +297,10 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             pba_values = [None] * n_scenarios
             max_pba = 0.0
 
-        threshold_lb = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name, require_positive=True)
-        threshold_ub = processing.lookup_seuil(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name, require_positive=True)
+        threshold_lb = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name,
+                                                    pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
+                                                    pop_df=pop_df, sharing_principle=sharing_principle)
         floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if (show_dls and dls_df is not None) else None
         unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
 
@@ -412,13 +427,13 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
             if scenario_idx == reference_idx:
                 pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
-                            ha="center", va="bottom", fontweight="bold", fontsize=15, color= "black", zorder=13)
+                            ha="center", va="bottom", fontweight="bold", style="italic", fontsize=15, color= "black", zorder=13)
             elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
                 pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
                 pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
-                pba_var_color = "lightcoral" if pba_variation_pct > 0 else ("lightgreen" if pba_variation_pct < 0 else "black")
+                pba_var_color =  "#9c0000" if pba_variation_pct > 0 else ("#005e00" if pba_variation_pct < 0 else "black")
                 pba_ax.text(scenario_idx, pba_y, pba_text_var,
-                            ha="center", va="bottom", fontweight="bold", fontsize=15, color=pba_var_color, zorder=13)
+                            ha="center", va="bottom", fontweight ="bold", style="italic", fontsize=15, color=pba_var_color, zorder=13)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
             subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)

@@ -136,6 +136,76 @@ def lookup_first_text(seuils_df, row_names, column_name):
 
 
 # ============================================================================
+# SEUILS RECALCULÉS SELON UN PRINCIPE DE PARTAGE ("sharing_principle")
+# ============================================================================
+# Remplace la lecture statique de "Égalité"/"Égalité (p. hab)" (et leurs variantes
+# limite haute) par un partage égal per capita du budget mondial ("Budget Global
+# annuel"/"Limite haute"), pour une période de référence choisie par sharing_principle
+# (voir config.SHARING_PRINCIPLE_POPULATION_ROW).
+
+
+def lookup_population(pop_df, population_row, column_name):
+    """Population en PERSONNES pour une ligne (année, ou "Moyenne ...") de la feuille
+    "Population" de seuils.xlsx, qui stocke des milliers d'habitants (cf. io.load_population_df)."""
+    return float(pop_df.loc[population_row, column_name]) * 1000
+
+
+def compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle, threshold_row_name):
+    """Seuil LB/UB, par capita ou national (France), recalculé selon un principe de
+    partage égalitaire du budget mondial, en remplacement de la valeur statique que
+    lookup_seuil aurait lue pour `threshold_row_name` (une des 4 constantes
+    THRESHOLD_LB/UB_ABS/PER_CAPITA de config).
+
+    Formule (partage égal per capita) :
+        seuil_p_hab = Budget_mondial(LB ou UB) / Conversion_budget_p_hab / Population_Monde(réf)
+        seuil_france = Budget_mondial(LB ou UB) / Conversion_budget / Population_Monde(réf) * Population_France(réf)
+
+    où Budget_mondial(LB)="Budget Global annuel", Budget_mondial(UB)="Limite haute" (dans
+    l'unité mondiale "Unité"), Conversion_budget/Conversion_budget_p_hab convertissent
+    cette unité mondiale vers "Unité affichage"/"Unité affichage (p.hab)" (mêmes lignes
+    utilisées en diviseur que CONVERSION_ROW_ABS/CONVERSION_ROW_PER_CAPITA), et réf est la
+    ligne de la feuille "Population" associée à sharing_principle.
+
+    Returns:
+        float, ou None si une donnée nécessaire est absente (budget/conversion manquant
+        pour ce sous-processus, population introuvable...).
+    """
+    if sharing_principle not in config.SHARING_PRINCIPLE_POPULATION_ROW:
+        raise ValueError(f"sharing_principle inconnu : {sharing_principle!r}")
+    if pop_df is None:
+        raise ValueError("pop_df est requis quand sharing_principle est fourni")
+
+    is_ub = threshold_row_name in (config.THRESHOLD_UB_ABS, config.THRESHOLD_UB_PER_CAPITA)
+    is_per_capita = threshold_row_name in (config.THRESHOLD_LB_PER_CAPITA, config.THRESHOLD_UB_PER_CAPITA)
+
+    world_budget_row = config.WORLD_BUDGET_ROW_UB if is_ub else config.WORLD_BUDGET_ROW_LB
+    world_conversion_row = config.WORLD_CONVERSION_ROW_PER_CAPITA if is_per_capita else config.WORLD_CONVERSION_ROW_ABS
+
+    world_budget = lookup_seuil(seuils_df, world_budget_row, subprocess_name, require_positive=True)
+    world_conversion = lookup_seuil(seuils_df, world_conversion_row, subprocess_name)
+    if world_budget is None or not world_conversion:
+        return None
+
+    population_row = config.SHARING_PRINCIPLE_POPULATION_ROW[sharing_principle]
+    world_population = lookup_population(pop_df, population_row, "Monde")
+    seuil = world_budget / world_conversion / world_population
+
+    if not is_per_capita:
+        seuil *= lookup_population(pop_df, population_row, "France")
+
+    return seuil
+
+
+def lookup_threshold(seuils_df, threshold_row_name, subprocess_name, pop_df=None, sharing_principle=None):
+    """Point d'entrée unique pour un seuil LB/UB dans les figures : lecture statique
+    (comportement historique, lookup_seuil avec require_positive=True) si
+    sharing_principle est None, sinon recalcul dynamique via compute_sharing_seuil."""
+    if sharing_principle is None:
+        return lookup_seuil(seuils_df, threshold_row_name, subprocess_name, require_positive=True)
+    return compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle, threshold_row_name)
+
+
+# ============================================================================
 # EMPREINTE EN VALEURS ABSOLUES (Synthèse multi-scénarios, Overshoot multi-scénarios)
 # ============================================================================
 
