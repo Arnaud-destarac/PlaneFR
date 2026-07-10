@@ -68,6 +68,46 @@ def _get_lp_unit(seuils_df, subprocess_name, unit_row):
     return processing.lookup_first_text(seuils_df, unit_row, subprocess_name)
 
 
+def _find_france_scenario_idx(scenario_names):
+    """Index du scénario "France" dans scenario_names, utilisé pour trier les LP
+    par dépassement CBA (voir _sort_subprocesses_by_france_overshoot).
+
+    Cherche un nom de scénario contenant "france" (insensible à la casse, ex.
+    "2019_France" dans la figure comparaison). Si aucun ne correspond (cas
+    multi-scénarios où tous les scénarios sont déjà la France, ex. Base_year_2015/
+    TREND_2050/...), retombe sur le scénario de référence
+    (config.REFERENCE_SCENARIO_IDX)."""
+    for idx, name in enumerate(scenario_names):
+        if "france" in name.lower():
+            return idx
+    return config.REFERENCE_SCENARIO_IDX
+
+
+def _sort_subprocesses_by_france_overshoot(
+    subprocesses, scenario_names, all_scenarios_data, seuils_df,
+    threshold_lb_row, pop_df, sharing_principle,
+):
+    """Trie les LP (lignes de la figure) par dépassement croissant du scénario
+    France (max entre CBA et PBA, si PBA présent) : plus la bulle France la plus
+    à droite sur une barre est loin, plus cette barre est affichée bas par
+    rapport aux autres."""
+    france_data = all_scenarios_data[_find_france_scenario_idx(scenario_names)]
+
+    def sort_key(subprocess_name):
+        payload = france_data.get(subprocess_name)
+        lb_val = processing.lookup_threshold(seuils_df, threshold_lb_row, subprocess_name,
+                                              pop_df=pop_df, sharing_principle=sharing_principle)
+        if payload is None or not lb_val:
+            return float("-inf")
+        rel_cba = _total_footprint(payload) / lb_val
+        abs_pba = payload.get("pba")
+        rel_pba = abs_pba / lb_val if abs_pba is not None else float("-inf")
+        rel_max = max(rel_cba, rel_pba)
+        return rel_max if np.isfinite(rel_max) else float("-inf")
+
+    return sorted(subprocesses, key=sort_key)
+
+
 # ============================================================================
 # DESSIN DU FOND ET DE L'AXE CASSÉ
 # ============================================================================
@@ -92,7 +132,7 @@ def _draw_lp_background(ax, x_min, x_max):
                             ["#e7731c", "#d62324", "#8f1f64", "#4f256d"])
 
 
-def _draw_above_5_uniform(ax, x_min, x_max):
+def _draw_above_break_uniform(ax, x_min, x_max):
     """Au-delà de x_main_max, couleur uniforme égale à la couleur atteinte en bout de dégradé."""
     if x_max <= x_min:
         return
@@ -174,11 +214,12 @@ def _draw_lp_title_above(ax, name, unit_text, ceiling, gap_below_bar, gap_above_
 def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
-    ub_color="#bc270a", x_main_max=5.0,
+    ub_color="#bc270a", x_main_max=7.0,
     show_pba=False, show_value_labels=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
+    sharing_principle="Equality 2100", pop_df=None,
 ):
     """Figure multi-LP de type Overshoot / Safe Operating Space.
 
@@ -211,6 +252,15 @@ def create_overshoot_safe_space_figure(
         title_gap_above_bar: (title_above_bar=True uniquement) écart, en
             fraction de hauteur de barre, entre le titre et la barre du dessus
             (ou, pour la 1ère barre, les graduations de l'axe X partagé).
+        sharing_principle: si fourni ("Equality 2050"/"Equality 2100"/"Equality
+            2019"), LB/UB sont recalculés à la volée par un partage égal per
+            capita du budget mondial pour la période de référence associée
+            (voir config.SHARING_PRINCIPLE_POPULATION_ROW et
+            processing.compute_sharing_seuil), au lieu d'être lus statiquement
+            dans seuils_df via threshold_lb_row/threshold_ub_row. Nécessite
+            pop_df. Si None (défaut), comportement inchangé.
+        pop_df: feuille "Population" de seuils.xlsx (io.load_population_df) --
+            requis seulement si sharing_principle est fourni.
 
     Returns:
         matplotlib.figure.Figure
@@ -220,6 +270,10 @@ def create_overshoot_safe_space_figure(
 
     first_scenario_data = all_scenarios_data[config.REFERENCE_SCENARIO_IDX]
     subprocesses = list(first_scenario_data.keys())
+    subprocesses = _sort_subprocesses_by_france_overshoot(
+        subprocesses, scenario_names, all_scenarios_data, seuils_df,
+        threshold_lb_row, pop_df, sharing_principle,
+    )
     n_lp = len(subprocesses)
 
     scenario_style = colors.scenario_style_map(scenario_names)
@@ -245,8 +299,10 @@ def create_overshoot_safe_space_figure(
             top_main_ax = ax
 
         unit_text = _get_lp_unit(seuils_df, subprocess_name, unit_row)
-        lb_val = processing.lookup_seuil(seuils_df, threshold_lb_row, subprocess_name, require_positive=True)
-        ub_val = processing.lookup_seuil(seuils_df, threshold_ub_row, subprocess_name, require_positive=True)
+        lb_val = processing.lookup_threshold(seuils_df, threshold_lb_row, subprocess_name,
+                                              pop_df=pop_df, sharing_principle=sharing_principle)
+        ub_val = processing.lookup_threshold(seuils_df, threshold_ub_row, subprocess_name,
+                                              pop_df=pop_df, sharing_principle=sharing_principle)
 
         if lb_val is None:
             ax.text(0.5, 0.5, f"{subprocess_name}: limite basse manquante", transform=ax.transAxes,
@@ -300,7 +356,7 @@ def create_overshoot_safe_space_figure(
 
             ax_ext.set_xlim(x2_min, x2_max)
             ax_ext.set_ylim(0, 1)
-            _draw_above_5_uniform(ax_ext, x2_min, x2_max)
+            _draw_above_break_uniform(ax_ext, x2_min, x2_max)
             _set_break_axis_ticks(ax_ext)
 
             d = 0.012

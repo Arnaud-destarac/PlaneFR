@@ -63,6 +63,20 @@ LB_COLOR = "#0d9a33"    # identique à plot_stacked_bar.py / plot_overshoot.py (
 UB_COLOR = "#bc270a"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Upper Bound")
 DLS_COLOR = "cyan"      # identique à plot_stacked_bar.py ("DLS")
 
+# En radial_power=1 (échelle linéaire stricte), un secteur dont le scénario de
+# référence (base_year) dépasse la Lower Bound de plus que ce facteur ferait
+# exploser l'échelle radiale de tous les secteurs. Pour ce secteur uniquement,
+# on recale alors la référence sur la Upper Bound (voir use_ub_ref plus bas) :
+# le cercle "1L" y devient rouge (UB) au lieu de vert (LB).
+
+OVERSHOOT_REBASE_THRESHOLD = 4.0
+
+# Marge (fraction de la valeur max relative -- barre ou seuil UB/LB/DLS) ajoutée
+# au-dessus de cette valeur pour fixer le plafond radial : la bande extérieure
+# démarre juste au-dessus de l'élément le plus haut, sans arrondir au L entier
+# supérieur (qui pouvait laisser jusqu'à 1L d'espace mort).
+RADIAL_AXIS_MARGIN_FRAC = 0.02
+
 # Aucun dégradé par scénario : toutes les barres/segments d'un LP (bande
 # extérieure comprise) partagent la même couleur (celle du LP). Les scénarios
 # ne sont distingués que par leur position angulaire au sein du secteur (voir
@@ -131,17 +145,19 @@ def _tangential_rotation_deg(theta_rad):
 
 
 def _nice_radial_ticks(rel_cap, max_ticks=6):
-    """Graduations entières (en multiples de la Lower Bound) de 1 à ceil(rel_cap),
-    en sous-échantillonnant si trop nombreuses (même idée que
-    plot_overshoot._set_break_axis_ticks). 1L est toujours inclus (cercle Lower
-    Bound)."""
-    r_ceil = max(1, int(np.ceil(rel_cap)))
-    ticks = list(range(1, r_ceil + 1))
+    """Graduations entières (en multiples de la Lower Bound) de 1 à floor(rel_cap)
+    (le plafond radial réel étant fixé séparément, juste au-dessus de rel_cap --
+    voir RADIAL_AXIS_MARGIN_FRAC -- une graduation à rel_cap lui-même n'aurait
+    pas de sens si ce n'est pas un entier), en sous-échantillonnant si trop
+    nombreuses (même idée que plot_overshoot._set_break_axis_ticks). 1L est
+    toujours inclus (cercle Lower Bound)."""
+    r_floor = max(1, int(np.floor(rel_cap)))
+    ticks = list(range(1, r_floor + 1))
     if len(ticks) > max_ticks:
-        step = max(1, int(np.ceil(r_ceil / max_ticks)))
-        ticks = list(range(step, r_ceil + 1, step))
-        if ticks[-1] != r_ceil:
-            ticks.append(r_ceil)
+        step = max(1, int(np.ceil(r_floor / max_ticks)))
+        ticks = list(range(step, r_floor + 1, step))
+        if ticks[-1] != r_floor:
+            ticks.append(r_floor)
     return sorted(set(ticks) | {1})
 
 
@@ -162,13 +178,14 @@ def _extract_value(payload, value_key):
     return float(val) if val is not None and np.isfinite(val) else None
 
 
-def _stack_segments(payload, categories, threshold_lb, group_by_category,
+def _stack_segments(payload, categories, threshold_ref, group_by_category,
                      show_categories, show_import_split, fallback_color):
     """Décompose l'empreinte CBA d'un (LP, scénario) en segments empilables, en
-    unités relatives à la Lower Bound, prêts à dessiner (couleur déjà résolue).
-    to_r() doit être appliqué aux BORNES cumulées par l'appelant (pas à la
-    hauteur du segment), seule façon de rester correct en échelle non-linéaire
-    (radial_power != 1).
+    unités relatives à threshold_ref (Lower Bound, sauf secteur recalé sur la
+    Upper Bound -- voir use_ub_ref dans create_radial_synthesis_figure), prêts
+    à dessiner (couleur déjà résolue). to_r() doit être appliqué aux BORNES
+    cumulées par l'appelant (pas à la hauteur du segment), seule façon de
+    rester correct en échelle non-linéaire (radial_power != 1).
 
     show_categories/show_import_split pilotent l'habillage, indépendamment :
       - les deux à True  : 1 segment par (catégorie, dom/imp), coloré par
@@ -186,7 +203,7 @@ def _stack_segments(payload, categories, threshold_lb, group_by_category,
         d'empilement (dom puis imp par groupe si group_by_category, sinon tout
         dom puis tout imp -- non pertinent si show_import_split=False).
     """
-    if payload is None or threshold_lb is None:
+    if payload is None or threshold_ref is None:
         return []
 
     def value_for(key, category):
@@ -219,7 +236,7 @@ def _stack_segments(payload, categories, threshold_lb, group_by_category,
     segments = []
     cumulative = 0.0
     for cat_idx, category, abs_val, is_import in order:
-        rel_val = abs_val / threshold_lb
+        rel_val = abs_val / threshold_ref
         if rel_val > 0:
             color = colors.get_dark_shade(colors.get_category_color(category, cat_idx)) if show_categories else fallback_color
             segments.append((cumulative, cumulative + rel_val, color, is_import))
@@ -259,6 +276,7 @@ def create_radial_synthesis_figure(
     r_max=None,
     title=None,
     figsize=(16, 16),
+    sharing_principle=None, pop_df=None,
 ):
     """Roue radiale : 1 secteur par LP, 1 barre par scénario, hauteur = valeur /
     Lower Bound. Le cercle Lower Bound (vert) est donc à rayon constant = 1L
@@ -304,6 +322,18 @@ def create_radial_synthesis_figure(
             -- même principe que sqrt, en plus prononcé. Le cercle Lower Bound
             reste à un rayon constant (=1) quelle que soit la valeur, car 1
             élevé à n'importe quelle puissance vaut toujours 1.
+            Cas particulier radial_power=1 (échelle linéaire, donc sans
+            compression des forts dépassements) : pour un secteur dont le
+            scénario de référence (base_year) dépasse la Lower Bound de plus
+            de OVERSHOOT_REBASE_THRESHOLD (5), la référence de CE secteur est
+            recalée sur la Upper Bound au lieu de la Lower Bound (use_ub_ref).
+            Concrètement, dans ce secteur : les barres/segments sont exprimés
+            en multiples de la Upper Bound, l'arc Upper Bound se retrouve
+            au rayon 1 (rouge) au lieu de l'arc Lower Bound (vert), et la
+            Lower Bound (< 1) reste tracée, positionnée relativement à cette
+            nouvelle référence. Le "cercle à 1L" de la figure est donc, dans
+            ce mode, composite : vert pour les secteurs sous le seuil de
+            dépassement, rouge pour ceux au-dessus.
         lp_colors: dict optionnel pour surcharger/étendre LP_COLORS.
         r_max: plafond optionnel de l'axe radial, en multiples de la Lower
             Bound (même unité que les graduations "NL") ; None = auto-calculé
@@ -312,6 +342,14 @@ def create_radial_synthesis_figure(
             of French NZE Scenarios") ; le suffixe (" - Consumption-based",
             " - Production-based" ou " - CBA vs PBA") est ajouté automatiquement
             selon show_cba/show_pba. Sans préfixe, seul le suffixe est affiché.
+        sharing_principle: si fourni ("Equality 2050"/"Equality 2100"/"Equality
+            2019"), threshold_lb/threshold_ub (LP) sont recalculés à la volée
+            par un partage égal per capita du budget mondial pour la période de
+            référence associée (voir config.SHARING_PRINCIPLE_POPULATION_ROW et
+            processing.compute_sharing_seuil), au lieu d'être lus statiquement
+            dans seuils_df. Nécessite pop_df.
+        pop_df: feuille "Population" de seuils.xlsx (io.load_population_df) --
+            requis seulement si sharing_principle est fourni.
 
     Returns:
         (fig, ax)
@@ -345,8 +383,10 @@ def create_radial_synthesis_figure(
     legend_categories = set()
     max_rel = 1.0
     for subprocess_name in subprocesses:
-        threshold_lb = processing.lookup_seuil(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name, require_positive=True)
-        threshold_ub = processing.lookup_seuil(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name, require_positive=True)
+        threshold_lb = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name,
+                                                    pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
+                                                    pop_df=pop_df, sharing_principle=sharing_principle)
         unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
         floor_ub = None
         if show_dls and dls_df is not None:
@@ -365,33 +405,58 @@ def create_radial_synthesis_figure(
             solo_key = "cba" if show_cba else "pba"
             values = [_extract_value(sd.get(subprocess_name), solo_key) for sd in all_scenarios_data]
 
-        if threshold_lb is not None:
-            rel_values = [(v / threshold_lb) if v is not None else None for v in values]
-            ub_rel = (threshold_ub / threshold_lb) if threshold_ub is not None else None
-            dls_rel = (floor_ub / threshold_lb) if floor_ub is not None else None
+        # Dépassement du scénario de référence (base_year) par rapport à la
+        # Lower Bound (max CBA/PBA en mode combiné, même logique que
+        # plot_overshoot._sort_subprocesses_by_france_overshoot) : détermine
+        # si ce secteur doit être recalé sur la Upper Bound (voir use_ub_ref
+        # dans la docstring de radial_power). Uniquement en radial_power=1 --
+        # aux autres puissances, la compression de l'échelle rend ce recalage
+        # inutile.
+        base_year_slots = [reference_idx * 2, reference_idx * 2 + 1] if combined else [reference_idx]
+        base_year_overshoot = None
+        if threshold_lb:
+            base_year_rels = [values[i] / threshold_lb for i in base_year_slots if values[i] is not None]
+            if base_year_rels:
+                base_year_overshoot = max(base_year_rels)
+        use_ub_ref = (
+            radial_power == 1
+            and threshold_lb is not None
+            and threshold_ub is not None
+            and base_year_overshoot is not None
+            and base_year_overshoot > OVERSHOOT_REBASE_THRESHOLD
+        )
+        threshold_ref = threshold_ub if use_ub_ref else threshold_lb
+
+        if threshold_ref is not None:
+            rel_values = [(v / threshold_ref) if v is not None else None for v in values]
+            ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
+            lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
+            dls_rel = (floor_ub / threshold_ref) if floor_ub is not None else None
         else:
             rel_values = [None] * n_slots
             ub_rel = None
+            lb_rel = None
             dls_rel = None
 
-        for rel in rel_values + [ub_rel, dls_rel]:
+        for rel in rel_values + [ub_rel, lb_rel, dls_rel]:
             if rel is not None and np.isfinite(rel):
                 max_rel = max(max_rel, rel)
 
         lp_info.append(dict(
-            name=subprocess_name, unit=unit_text, threshold_lb=threshold_lb, categories=categories,
-            values=values, rel_values=rel_values, ub_rel=ub_rel, dls_rel=dls_rel,
-            color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
+            name=subprocess_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
+            values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, dls_rel=dls_rel,
+            use_ub_ref=use_ub_ref, color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
         ))
 
-    # Les graduations "NL" sont calculées AVANT le plafond radial : la dernière
-    # (rel_ticks[-1], toujours = ceil(rel_cap_input) d'après _nice_radial_ticks)
-    # devient elle-même ce plafond, pour que la bande extérieure démarre pile
-    # sur ce dernier cercle -- pas d'espace mort entre la plus haute barre et
-    # la bande (l'arrondi au L entier supérieur joue déjà le rôle de marge).
+    # Le plafond radial est fixé juste au-dessus (RADIAL_AXIS_MARGIN_FRAC) de la
+    # valeur relative la plus haute (barre ou seuil UB/LB/DLS affiché), pour que
+    # la bande extérieure démarre tout près du sommet réel -- pas de l'arrondi
+    # au L entier supérieur, qui pouvait laisser jusqu'à 1L d'espace mort. Les
+    # graduations "NL", elles, restent des multiples entiers (jusqu'au dernier
+    # ≤ ce sommet réel).
     rel_cap_input = r_max if r_max is not None else max_rel
     rel_ticks = _nice_radial_ticks(rel_cap_input)
-    rel_cap = float(rel_ticks[-1])
+    rel_cap = rel_cap_input * (1 + RADIAL_AXIS_MARGIN_FRAC)
     r_max_plot = to_r(rel_cap)
     ring_thickness = r_max_plot * 0.11
     r_ring_start = r_max_plot
@@ -435,14 +500,21 @@ def create_radial_synthesis_figure(
         bar_width = geo["bar_width"]
         ring_centers = geo["ring_centers"][lp_idx]
 
+        def _bar_hatch(scenario_idx, is_import=False):
+            # Hachurage "xx" en plus pour le scénario de référence (base_year),
+            # combinable avec le "/" de l'import (ex. "/xx") -- matplotlib
+            # superpose les motifs d'une chaîne hatch à plusieurs caractères.
+            hatch = ("/" if is_import else "") + ("xx" if scenario_idx == reference_idx else "")
+            return hatch or None
+
         def _draw_cba_bar(theta, scenario_idx):
             payload = all_scenarios_data[scenario_idx].get(info["name"])
-            segments = _stack_segments(payload, info["categories"], info["threshold_lb"], group_by_category,
+            segments = _stack_segments(payload, info["categories"], info["threshold_ref"], group_by_category,
                                         show_categories, show_import_split, info["color"])
             for rel_bottom, rel_top, color, is_import in segments:
                 ax.bar([theta], [to_r(rel_top) - to_r(rel_bottom)], width=bar_width, bottom=to_r(rel_bottom),
                        color=color, edgecolor="white", linewidth=0.4,
-                       hatch="/" if is_import else None, zorder=5)
+                       hatch=_bar_hatch(scenario_idx, is_import), zorder=5)
 
         # PBA : toujours en nuance plus claire de la couleur du LP (au lieu
         # d'un hachurage) -- que ce soit la seule comptabilité affichée ou en
@@ -456,8 +528,10 @@ def create_radial_synthesis_figure(
                 _draw_cba_bar(theta, scenario_idx)
             pba_centers = centers[1::2]
             pba_heights = [to_r(rel) if rel is not None else 0.0 for rel in info["rel_values"][1::2]]
-            ax.bar(pba_centers, pba_heights, width=bar_width, bottom=0.0,
-                   color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
+            for scenario_idx, (theta, height) in enumerate(zip(pba_centers, pba_heights)):
+                ax.bar([theta], [height], width=bar_width, bottom=0.0,
+                       color=pba_color, edgecolor="white", linewidth=0.6,
+                       hatch=_bar_hatch(scenario_idx), zorder=5)
         elif show_cba:
             # Empreinte détaillée disponible (domestique/importé par catégorie) :
             # barre empilée selon show_categories/show_import_split (les deux à
@@ -471,8 +545,10 @@ def create_radial_synthesis_figure(
             # PBA seul : une seule valeur scalaire par (LP, scénario) dans les
             # données sources -> pas de ventilation possible, barre pleine.
             heights = [to_r(rel) if rel is not None else 0.0 for rel in info["rel_values"]]
-            ax.bar(centers, heights, width=bar_width, bottom=0.0,
-                   color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
+            for scenario_idx, (theta, height) in enumerate(zip(centers, heights)):
+                ax.bar([theta], [height], width=bar_width, bottom=0.0,
+                       color=pba_color, edgecolor="white", linewidth=0.6,
+                       hatch=_bar_hatch(scenario_idx), zorder=5)
 
         # Bande extérieure : pavage complet du secteur (ring_centers/ring_width,
         # sans le gap_frac des barres) pour ne laisser aucun vide entre
@@ -511,7 +587,17 @@ def create_radial_synthesis_figure(
             ax.text(theta, r_ring_mid, text, ha="center", va="center",
                     fontsize=14.5, fontweight="bold", color=color, zorder=9)
 
-        if info["ub_rel"] is not None:
+        if info["use_ub_ref"]:
+            # Secteur recalé sur la Upper Bound (voir docstring de
+            # radial_power) : la Upper Bound est désormais le repère "1L" du
+            # secteur (tracée plus bas avec le cercle composite LB/UB), donc
+            # seule la Lower Bound (< 1L) reste à afficher ici, positionnée
+            # relativement à cette nouvelle référence.
+            if info["lb_rel"] is not None:
+                theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
+                ax.plot(theta_arc, np.full_like(theta_arc, to_r(info["lb_rel"])), color=LB_COLOR,
+                        linewidth=3.0, solid_capstyle="butt", zorder=8)
+        elif info["ub_rel"] is not None:
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
             ax.plot(theta_arc, np.full_like(theta_arc, to_r(info["ub_rel"])), color=UB_COLOR,
                     linewidth=3.0, solid_capstyle="butt", zorder=8)
@@ -528,9 +614,17 @@ def create_radial_synthesis_figure(
                        rotation=_tangential_rotation_deg(bisector), rotation_mode="anchor", zorder=9)
         txt.set_path_effects([pe.withStroke(linewidth=3, foreground="white")])
 
-    # Lower Bound : cercle plein, rayon constant = 1L (point fixe de to_r, quel
-    # que soit radial_power), tracé par-dessus les barres.
-    ax.plot(theta_full, np.full_like(theta_full, to_r(1.0)), color=LB_COLOR, linewidth=3.2, zorder=8)
+    # Cercle "1L" : rayon constant = 1 (point fixe de to_r, quel que soit
+    # radial_power), tracé par-dessus les barres, secteur par secteur (au lieu
+    # d'un unique cercle plein) pour pouvoir varier sa couleur -- vert (Lower
+    # Bound, cas normal) ou rouge (Upper Bound, secteur recalé via use_ub_ref,
+    # voir docstring de radial_power). Les arcs pavent tout wedge_span (pas de
+    # gap) pour rester visuellement un cercle continu quand tous les secteurs
+    # sont dans le même mode.
+    for lp_idx, info in enumerate(lp_info):
+        theta_arc = np.linspace(geo["boundaries"][lp_idx], geo["boundaries"][lp_idx] + geo["wedge_span"], 40)
+        ring_color = UB_COLOR if info["use_ub_ref"] else LB_COLOR
+        ax.plot(theta_arc, np.full_like(theta_arc, to_r(1.0)), color=ring_color, linewidth=3.2, zorder=8)
 
     ax.set_rlim(0, r_ring_end * 1.02)
 
@@ -561,6 +655,9 @@ def create_radial_synthesis_figure(
         # pour tous les LP.
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Consumption-based"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Production-based"))
+
+    legend_handles.append(Patch(facecolor="white", edgecolor="black", hatch="xx", linewidth=1,
+                                 label=f"Base year"))
 
     fig.legend(handles=legend_handles, loc="lower center", ncol=min(5, len(legend_handles)),
                bbox_to_anchor=(0.5, 0.015), frameon=False, fontsize=15)
