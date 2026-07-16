@@ -16,7 +16,7 @@ from pathlib import Path
 # CHEMINS
 # ============================================================================
 
-PROJECT_DIR = Path(r"C:\Users\Arnaud\Documents\PlaneFR")
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_DIR / "data"
 BASE_DATA_DIR = DATA_DIR / "3.10.2"
 

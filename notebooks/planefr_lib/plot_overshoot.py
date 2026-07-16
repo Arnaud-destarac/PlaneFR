@@ -214,7 +214,7 @@ def _draw_lp_title_above(ax, name, unit_text, ceiling, gap_below_bar, gap_above_
 def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
-    ub_color="#bc270a", x_main_max=7.0,
+    ub_color="#bc270a", x_main_max=8.0,
     show_pba=False, show_value_labels=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
