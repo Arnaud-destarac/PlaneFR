@@ -1,0 +1,52 @@
+{
+    "matmat": {
+        "version": "0.9.0-beta"
+    },
+    "environment": {
+        "python_version": "3.11.15",
+        "python_implementation": "CPython",
+        "platform": "Windows-10-10.0.19044-SP0",
+        "hostname": "PH8G1I-5472Y31",
+        "user": "Arnaud"
+    },
+    "run": {
+        "data_utc": "2026-07-16",
+        "time_utc": "11:34:31",
+        "datetime_utc": [
+            "2026-07-16T11:34:31+00:00"
+        ]
+    },
+    "workflow": {
+        "kind": "engine",
+        "name": "eeio",
+        "identity": {
+            "path_in": {
+                "accounts": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\4-PlaneFR\\Outputs\\France\\Base_year_2015",
+                "shock": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\3-workshops\\2-shocks\\1-transitions_2050\\S1_2050",
+                "bridges": null
+            },
+            "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.10.2\\S1_2050",
+            "export_format": [
+                "pickle"
+            ],
+            "clean_path_out": null,
+            "system_calcul_strategy": "exo_invest_matrix",
+            "shall_calculate_mapping": false,
+            "extension_names": [
+                "dom_ghg_emissions",
+                "dom_ghg_combustion",
+                "dom_energy",
+                "dom_land_use",
+                "dom_biogeochemical",
+                "dom_raw_materials",
+                "dom_water",
+                "imp_ghg_emissions",
+                "imp_energy",
+                "imp_land_use",
+                "imp_biogeochemical",
+                "imp_raw_materials",
+                "imp_water"
+            ]
+        }
+    }
+}
