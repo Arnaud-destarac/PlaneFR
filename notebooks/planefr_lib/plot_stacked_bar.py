@@ -222,6 +222,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
 
 def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
                                    dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
+                                   show_values=True, show_thresholds=True, show_variation_bars=False,
                                    sharing_principle=None, pop_df=None):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
@@ -237,18 +238,51 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         show_dls: True (défaut) pour afficher le plancher social (DLS) quand
             dls_df fournit une valeur pour le LP ; False pour l'ignorer même
             si dls_df est fourni.
+        show_values: True (défaut) pour afficher les valeurs/variations
+            au-dessus des barres (CBA et PBA) ; False les masque (les barres,
+            la croix PBA et les traits de seuil restent inchangés).
+        show_thresholds: True (défaut) pour afficher les traits horizontaux de
+            seuil (Lower Bound, Upper Bound, DLS) et la rupture d'axe qui leur
+            est associée ; False les masque (les valeurs au-dessus des barres
+            restent pilotées indépendamment par show_values).
+        show_variation_bars: False (défaut) pour l'affichage habituel (chaque
+            barre = empreinte absolue empilée par catégorie). True pour afficher,
+            pour tous les scénarios sauf la référence, uniquement la variation
+            par rapport à la référence : chaque segment catégorie/origine
+            (domestique ou importé) est empilé au-dessus du total de la
+            référence (l'"ordonnée 0" de la vue) s'il augmente, ou empilé
+            en-dessous s'il diminue, avec une hauteur égale à la valeur absolue
+            de la variation. La barre de la référence reste inchangée (empilée
+            depuis 0) et sert de repère visuel pour ce niveau zéro (trait
+            pointillé). Une croix marque, pour chaque scénario, le total réel
+            de son empreinte (utile quand des segments montent et d'autres
+            descendent, pour voir où se situe le solde net).
         sharing_principle, pop_df: voir create_stacked_bar_chart -- s'appliquent
             ici à threshold_lb ET threshold_ub.
 
     Returns:
         (fig, axes_list)
     """
-    first_scenario_data = all_scenarios_data[config.REFERENCE_SCENARIO_IDX]
+    reference_idx = config.REFERENCE_SCENARIO_IDX
+    # Le scénario de référence (base_year) garde sa position ; les autres sont
+    # affichés dans l'ordre inverse (celui qui était le plus loin dans
+    # l'alphabet -- donc le plus éloigné de la référence -- se retrouve
+    # désormais juste à côté d'elle, et inversement) -- voir la même logique
+    # dans create_radial_synthesis_figure.
+    other_indices = [i for i in range(len(scenario_names)) if i != reference_idx]
+    display_order = list(range(len(scenario_names)))
+    for slot, idx in zip(other_indices, reversed(other_indices)):
+        display_order[slot] = idx
+    scenario_names = [scenario_names[i] for i in display_order]
+    all_scenarios_data = [all_scenarios_data[i] for i in display_order]
+    subprocess_to_lp_list = [subprocess_to_lp_list[i] for i in display_order]
+
+    first_scenario_data = all_scenarios_data[reference_idx]
     subprocesses = list(first_scenario_data.keys())
     n_lp = len(subprocesses)
 
     fig = plt.figure(figsize=(20, 14))
-    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.9, bottom=0.12, left=0.045, right=0.99)
+    gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.12, left=0.045, right=0.99)
     positions = [(r, c) for r in range(3) for c in range(3)]
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
@@ -304,6 +338,15 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if (show_dls and dls_df is not None) else None
         unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
 
+        if not show_thresholds:
+            # Masque les traits de seuil (LB/UB/DLS) : les nuller ici désactive
+            # en cascade toute la logique en aval qui en dépend (axhline,
+            # rupture d'axe, réservation de place dans bottom_max/ylim). Piloté
+            # indépendamment de show_values (valeurs au-dessus des barres).
+            threshold_lb = None
+            threshold_ub = None
+            floor_ub = None
+
         # Rupture d'axe si un seuil (bas et/ou haut) dépasse largement le max observé,
         # pour ne pas écraser les barres en zoomant sur un seuil très lointain.
         use_break_lb = threshold_lb is not None and max_total > 0 and threshold_lb > max_total * 1.5
@@ -329,41 +372,69 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             ax.spines["top"].set_visible(False)
             ax_top.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
-        # DEUXIÈME PASSE : barres empilées en valeurs absolues
-        def draw_segment(category, cat_idx, key, bottom_heights, hatch=None):
+        # DEUXIÈME PASSE : barres empilées en valeurs absolues (ou, en mode
+        # show_variation_bars, en variation par rapport à la référence pour les
+        # scénarios non-référence, empilée au-dessus/en-dessous du total de
+        # la référence selon le signe de chaque segment).
+        baseline_total = total_values[reference_idx]
+        baseline_scenario_data = all_scenarios_data[reference_idx]
+
+        def value_for(scenario_idx, key, category):
+            raw = heights_for(all_scenarios_data[scenario_idx], key, category)
+            if show_variation_bars and scenario_idx != reference_idx:
+                return raw - heights_for(baseline_scenario_data, key, category)
+            return raw
+
+        def draw_segment(category, cat_idx, key, pos_bottom, neg_bottom, hatch=None):
             color_dark = colors.get_dark_shade(colors.get_category_color(category, cat_idx))
             label_suffix = "Import" if hatch else "Domestic"
-            heights = np.array([heights_for(sd, key, category) for sd in all_scenarios_data])
-            ax.bar(x_pos, heights, bar_width, label=f"{category} - {label_suffix}",
-                   bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch=hatch)
-            return heights
+            values = np.array([value_for(i, key, category) for i in range(n_scenarios)])
+            bars_bottom = np.where(values >= 0, pos_bottom, neg_bottom)
+            ax.bar(x_pos, values, bar_width, label=f"{category} - {label_suffix}",
+                   bottom=bars_bottom, color=color_dark, edgecolor="white", linewidth=0.5, hatch=hatch)
+            pos_bottom = pos_bottom + np.where(values >= 0, values, 0)
+            neg_bottom = neg_bottom + np.where(values < 0, values, 0)
+            return pos_bottom, neg_bottom
 
-        bottom_heights = np.zeros(n_scenarios)
+        pos_bottom = np.full(n_scenarios, baseline_total if show_variation_bars else 0.0)
+        neg_bottom = np.full(n_scenarios, baseline_total if show_variation_bars else 0.0)
+        if show_variation_bars:
+            pos_bottom[reference_idx] = 0.0
+            neg_bottom[reference_idx] = 0.0
+
         if group_by_category:
             for cat_idx, category in enumerate(categories):
-                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
-                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
+                pos_bottom, neg_bottom = draw_segment(category, cat_idx, "domestique", pos_bottom, neg_bottom)
+                pos_bottom, neg_bottom = draw_segment(category, cat_idx, "importé", pos_bottom, neg_bottom, hatch="/")
         else:
             for cat_idx, category in enumerate(categories):
-                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "domestique", bottom_heights)
+                pos_bottom, neg_bottom = draw_segment(category, cat_idx, "domestique", pos_bottom, neg_bottom)
             for cat_idx, category in enumerate(categories):
-                bottom_heights = bottom_heights + draw_segment(category, cat_idx, "importé", bottom_heights, hatch="/")
+                pos_bottom, neg_bottom = draw_segment(category, cat_idx, "importé", pos_bottom, neg_bottom, hatch="/")
+
+        if show_variation_bars:
+            # baseline_total <= max_total par construction, donc toujours dans
+            # les limites de ax (pas besoin de la logique de rupture d'axe ici).
+            ax.axhline(y=baseline_total, color="black", linestyle=":", linewidth=1.3, zorder=9)
 
         if threshold_lb is not None:
             (ax_top if (use_break_lb and ax_top is not None) else ax).axhline(
-                y=threshold_lb, color="#0d9a33", linestyle="-", linewidth=3.7, label="LP", zorder=10)
+                y=threshold_lb, color="#0d9a33", linestyle="-", linewidth=2.5, label="LP", zorder=10)
         if threshold_ub is not None:
             (ax_top if (use_break_ub and ax_top is not None) else ax).axhline(
-                y=threshold_ub, color="#bc270a", linestyle="-", linewidth=3.7, label="LP (high-risk)", zorder=10)
+                y=threshold_ub, color="#bc270a", linestyle="-", linewidth=2.5, label="LP (high-risk)", zorder=10)
         if floor_ub is not None:
-            ax.axhline(y=floor_ub, color="cyan", linestyle="--", linewidth=3.7, label="DLS", zorder=10)
+            ax.axhline(y=floor_ub, color="cyan", linestyle="--", linewidth=2.5, label="DLS", zorder=10)
 
         bottom_max = max(max_total, floor_ub or 0, max_pba)
+        if show_variation_bars:
+            bottom_max = max(bottom_max, float(np.max(pos_bottom)))
         if threshold_lb is not None and not use_break_lb:
             bottom_max = max(bottom_max, threshold_lb)
         if threshold_ub is not None and not use_break_ub:
             bottom_max = max(bottom_max, threshold_ub)
-        ax.set_ylim(0, (bottom_max or 1.0) * 1.1)
+        y_min = min(0.0, float(np.min(neg_bottom))) if show_variation_bars else 0.0
+        ax.set_ylim(y_min * 1.1 if y_min < 0 else 0, (bottom_max or 1.0) * 1.1)
 
         if use_break and ax_top is not None:
             far_thresholds = [t for t, broken in ((threshold_lb, use_break_lb), (threshold_ub, use_break_ub)) if broken]
@@ -391,56 +462,69 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             target_ax.scatter(scenario_idx, pba_val, marker="X", s=140, color="black",
                                linewidths=1.5, zorder=12)
 
-        ref_total = total_values[reference_idx]
-        ref_pba = pba_values[reference_idx]
-        ax_margin = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02
-        # Superposition jugée réelle seulement si la croix PBA est sur le même axe
-        # que la barre (pas de conflit possible si elle est sur ax_top, au-delà de
-        # la rupture d'axe) ET proche du total en distance absolue sur l'axe.
-        overlap_threshold = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.1
+        # Mode variation : croix "+" marquant, pour chaque scénario, le total réel
+        # de son empreinte (CBA) -- utile car le solde net d'un scénario ne
+        # correspond pas forcément au sommet des segments empilés vers le haut
+        # quand certains segments montent et d'autres descendent.
+        if show_variation_bars:
+            for scenario_idx, total_val in enumerate(total_values):
+                target_ax = ax_top if (use_break and ax_top is not None and total_val > ax.get_ylim()[1]) else ax
+                target_ax.scatter(scenario_idx, total_val, marker="P", s=170, color="black",
+                                   edgecolors="white", linewidths=1, zorder=14)
 
-        for scenario_idx, total_val in enumerate(total_values):
-            pba_val = pba_values[scenario_idx]
-            pba_ax = pba_axes[scenario_idx]
-            overlapping = (
-                pba_ax is ax and pba_val is not None and np.isfinite(pba_val)
-                and abs(pba_val - total_val) < overlap_threshold
-            )
-            cba_y, cba_va = (pba_val - ax_margin, "top") if overlapping else (total_val + ax_margin, "bottom")
+        if show_values:
+            ref_total = total_values[reference_idx]
+            ref_pba = pba_values[reference_idx]
+            ax_margin = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02
+            # Superposition jugée réelle seulement si la croix PBA est sur le même
+            # axe que la barre (pas de conflit possible si elle est sur ax_top, au-
+            # delà de la rupture d'axe) ET proche du total en distance absolue sur
+            # l'axe.
+            overlap_threshold = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.1
 
-            if scenario_idx == reference_idx:
-                ax.text(scenario_idx, cba_y, f"{total_val:.0f}",
-                        ha="center", va=cba_va, fontweight="bold", fontsize=15, color="black", zorder=13)
-            elif ref_total > 0:
-                variation_pct = (total_val - ref_total) / ref_total * 100
-                text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
-                var_color = "red" if variation_pct > 0 else ("green" if variation_pct < 0 else "black")
-                ax.text(scenario_idx, cba_y, text_var,
-                        ha="center", va=cba_va, fontweight="bold", fontsize=15, color=var_color, zorder=13)
+            for scenario_idx, total_val in enumerate(total_values):
+                pba_val = pba_values[scenario_idx]
+                pba_ax = pba_axes[scenario_idx]
+                overlapping = (
+                    pba_ax is ax and pba_val is not None and np.isfinite(pba_val)
+                    and abs(pba_val - total_val) < overlap_threshold
+                )
+                cba_y, cba_va = (pba_val - ax_margin, "top") if overlapping else (total_val + ax_margin, "bottom")
 
-            # Texte PBA (total pour la référence, variation relative à la
-            # référence pour les autres), toujours au-dessus de la croix.
-            if pba_val is None or not np.isfinite(pba_val) or pba_ax is None:
-                continue
-            pba_margin = (pba_ax.get_ylim()[1] - pba_ax.get_ylim()[0]) * 0.02
-            pba_y = pba_val + pba_margin
+                if scenario_idx == reference_idx:
+                    ax.text(scenario_idx, cba_y, f"{total_val:.0f}",
+                            ha="center", va=cba_va, fontweight="bold", fontsize=15, color="black", zorder=13)
+                elif ref_total > 0:
+                    variation_pct = (total_val - ref_total) / ref_total * 100
+                    text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
+                    var_color = "red" if variation_pct > 0 else ("green" if variation_pct < 0 else "black")
+                    ax.text(scenario_idx, cba_y, text_var,
+                            ha="center", va=cba_va, fontweight="bold", fontsize=15, color=var_color, zorder=13)
 
-            if scenario_idx == reference_idx:
-                pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
-                            ha="center", va="bottom", fontweight="bold", style="italic", fontsize=15, color= "black", zorder=13)
-            elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
-                pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
-                pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
-                pba_var_color =  "#9c0000" if pba_variation_pct > 0 else ("#005e00" if pba_variation_pct < 0 else "black")
-                pba_ax.text(scenario_idx, pba_y, pba_text_var,
-                            ha="center", va="bottom", fontweight ="bold", style="italic", fontsize=15, color=pba_var_color, zorder=13)
+                # Texte PBA (total pour la référence, variation relative à la
+                # référence pour les autres), toujours au-dessus de la croix.
+                if pba_val is None or not np.isfinite(pba_val) or pba_ax is None:
+                    continue
+                pba_margin = (pba_ax.get_ylim()[1] - pba_ax.get_ylim()[0]) * 0.02
+                pba_y = pba_val + pba_margin
+
+                if scenario_idx == reference_idx:
+                    pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
+                                ha="center", va="bottom", fontweight="bold", style="italic", fontsize=15, color= "black", zorder=13)
+                elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
+                    pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
+                    pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
+                    pba_var_color =  "#9c0000" if pba_variation_pct > 0 else ("#005e00" if pba_variation_pct < 0 else "black")
+                    pba_ax.text(scenario_idx, pba_y, pba_text_var,
+                                ha="center", va="bottom", fontweight ="bold", style="italic", fontsize=15, color=pba_var_color, zorder=13)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
             subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
 
         ax.set_ylabel(unit_text or "Empreintes", fontsize=14, fontweight="bold")
 
-        ax.set_xticks([])
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(scenario_names, rotation=0, ha="center", fontweight="bold", fontsize=10.5)
         ax.grid(axis="y", alpha=0.3, linestyle="--")
 
     for idx in range(n_lp, len(positions)):
@@ -449,16 +533,22 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
 
     legend_handles, legend_labels = _build_category_legend(colors.sort_categories(list(legend_categories)))
 
-    legend_handles.append(Line2D([0], [0], color="green", linewidth=3))
-    legend_labels.append("Lower Bound")
-    legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
-    legend_labels.append("Upper Bound")
+    if show_thresholds:
+        legend_handles.append(Line2D([0], [0], color="green", linewidth=3))
+        legend_labels.append("Lower Bound")
+        legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
+        legend_labels.append("Upper Bound")
     if show_pba:
         legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
         legend_labels.append("Production-based")
-    if show_dls and dls_df is not None:
+    if show_dls and dls_df is not None and show_thresholds:
         legend_handles.append(Line2D([0], [0], color="cyan", linestyle="--", linewidth=3))
         legend_labels.append("DLS")
+    if show_variation_bars:
+        legend_handles.append(Line2D([0], [0], color="black", linestyle=":", linewidth=1.3))
+        legend_labels.append("Baseline total")
+        legend_handles.append(Line2D([0], [0], marker="P", color="black", linestyle="None", markersize=11))
+        legend_labels.append("Total footprint")
 
     fig.legend(legend_handles, legend_labels, loc="lower center", ncol=5, fontsize=16,
                bbox_to_anchor=(0.5, 0.015), frameon=True, fancybox=True, shadow=True)
@@ -467,7 +557,5 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         "Planetary boundaries assessment of French NZE Scenarios",
         fontsize=16, fontweight="bold", y=0.98,
     )
-    caption = "Scenario order : " + " → ".join(scenario_names)
-    fig.text(0.5, 0.94, caption, ha="center", fontsize=15, style="italic", color="#333333")
 
     return fig, axes_list

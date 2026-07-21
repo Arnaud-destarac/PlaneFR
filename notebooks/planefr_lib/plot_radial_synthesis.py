@@ -12,7 +12,8 @@ Une seule fonction, pilotée par 2 booléens indépendants show_cba/show_pba
     consommation), juste pliée en radial au lieu de cartésien. show_categories
     et show_import_split (bool, indépendants) activent/désactivent chacune de
     ces deux distinctions ; si les deux sont False, la barre redevient pleine,
-    colorée par la couleur du LP.
+    colorée par la couleur du LP (nuancée par scénario si show_pba=False,
+    voir plus bas).
   - show_pba=True : valeurs production (payload["pba"]). C'est déjà un
     scalaire unique dans les données sources (process_single_subprocess_scenario
     ne le ventile ni par catégorie ni par dom/imp) -> chaque barre reste pleine,
@@ -23,16 +24,21 @@ Une seule fonction, pilotée par 2 booléens indépendants show_cba/show_pba
     figure -- pour chaque scénario, 2 barres adjacentes (CBA puis PBA) et 2
     sous-bandes adjacentes dans la bande extérieure.
 
-Titre, légende et sous-titre s'adaptent automatiquement à show_cba/show_pba
-(pas besoin de les répéter à chaque appel).
+Titre et légende s'adaptent automatiquement à show_cba/show_pba (pas besoin de
+les répéter à chaque appel).
 
-Aucun dégradé de couleur entre scénarios : toutes les barres/segments d'un
-même LP (bande extérieure comprise) partagent la couleur de ce LP (couleurs
-demandées : vert clair cropland, vert foncé biodiversité, bleu ciel eau bleue,
-gris matières premières, marron clair N, marron foncé P, orange GHG). Les
-scénarios ne sont distingués que par leur position angulaire (gauche->droite
-au sein du secteur, rappelée en sous-titre de la figure) et par le texte de la
-bande extérieure.
+Couleurs des barres/bande extérieure : quand CBA et PBA sont affichés
+ensemble (show_cba ET show_pba), chaque LP garde ses deux nuances -- pleine
+pour le CBA, claire pour le PBA -- afin de distinguer les deux comptabilités.
+Quand une seule des deux est affichée (figure "solo"), les deux nuances ne
+servent plus à distinguer CBA/PBA (il n'y en a qu'un) : elles distinguent
+alors le scénario de référence (base_year, nuance pleine -- l'ancienne
+couleur "CBA") des autres scénarios (nuance claire -- l'ancienne couleur
+"PBA"), qui partagent tous la même couleur. Les scénarios ne sont sinon
+distingués que par leur position angulaire au sein du secteur et par le texte
+de la bande extérieure -- pour les deux LP "opposés" sur la roue (Raw
+material consumption / Blue water consumption), le nom du scénario est en
+plus rappelé au-dessus de chaque case de la bande extérieure.
 """
 
 import numpy as np
@@ -77,11 +83,11 @@ OVERSHOOT_REBASE_THRESHOLD = 4.0
 # supérieur (qui pouvait laisser jusqu'à 1L d'espace mort).
 RADIAL_AXIS_MARGIN_FRAC = 0.02
 
-# Aucun dégradé par scénario : toutes les barres/segments d'un LP (bande
-# extérieure comprise) partagent la même couleur (celle du LP). Les scénarios
-# ne sont distingués que par leur position angulaire au sein du secteur (voir
-# le sous-titre "Ordre des scénarios..." sur la figure) et par le texte de la
-# bande extérieure.
+# Pas de sous-titre récapitulant l'ordre des scénarios : pour ces deux LP,
+# choisis à l'opposé l'un de l'autre sur la roue, le nom du scénario est
+# rappelé directement au-dessus de la case (total/variation) qui lui
+# correspond dans la bande extérieure.
+SCENARIO_LABEL_SUBPROCESSES = ("Raw material consumption", "Blue water consumption")
 
 
 # ============================================================================
@@ -299,11 +305,18 @@ def create_radial_synthesis_figure(
             - les deux True (défaut) : côte à côte -- pour chaque scénario,
               2 barres adjacentes (CBA pleine/empilée, PBA en nuance claire)
               et la bande extérieure suit le même découpage, 2 sous-bandes par
-              scénario. Titre, légende et sous-titre s'adaptent automatiquement.
+              scénario. Titre et légende s'adaptent automatiquement.
+            - une seule des deux affichée (figure "solo") : les nuances
+              pleine/claire ne distinguent plus CBA/PBA (redondant, il n'y en
+              a qu'un) mais le scénario de référence (base_year, nuance
+              pleine) des autres scénarios (nuance claire), pour toute case où
+              show_categories ne prend pas déjà le dessus (voir ci-dessous).
         show_categories: (CBA uniquement) True = empile 1 segment par catégorie
-            de consommation, coloré comme create_stacked_bar_chart. False = pas
-            de distinction de catégorie ; la barre prend alors la couleur du LP
-            (nuancée par scénario, comme la bande extérieure et les barres PBA).
+            de consommation, coloré comme create_stacked_bar_chart (la
+            distinction base_year/autres scénarios reste visible dans la
+            bande extérieure, mais plus dans les segments eux-mêmes). False =
+            pas de distinction de catégorie ; la barre prend alors la couleur
+            du LP, nuancée par scénario comme décrit plus haut.
         show_import_split: (CBA uniquement) True = distingue domestique (plein)
             / importé (hachuré). False = domestique + importé fusionnés dans le
             même segment.
@@ -359,6 +372,17 @@ def create_radial_synthesis_figure(
     combined = show_cba and show_pba
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
+    # Le scénario de référence (base_year) garde sa position ; les autres sont
+    # affichés dans l'ordre inverse (celui qui était le plus loin dans
+    # l'alphabet -- donc le plus éloigné de la référence -- se retrouve
+    # désormais juste à côté d'elle, et inversement).
+    other_indices = [i for i in range(len(scenario_names)) if i != reference_idx]
+    display_order = list(range(len(scenario_names)))
+    for slot, idx in zip(other_indices, reversed(other_indices)):
+        display_order[slot] = idx
+    scenario_names = [scenario_names[i] for i in display_order]
+    all_scenarios_data = [all_scenarios_data[i] for i in display_order]
+
     first_scenario_data = all_scenarios_data[reference_idx]
     subprocesses = list(first_scenario_data.keys())
     n_lp = len(subprocesses)
@@ -395,15 +419,21 @@ def create_radial_synthesis_figure(
         categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
         legend_categories.update(categories)
 
+        cba_values = [_extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
+        pba_values = [_extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
         if combined:
             values = []
-            for sd in all_scenarios_data:
-                payload = sd.get(subprocess_name)
-                values.append(_extract_value(payload, "cba"))
-                values.append(_extract_value(payload, "pba"))
+            for cba_val, pba_val in zip(cba_values, pba_values):
+                values.append(cba_val)
+                values.append(pba_val)
         else:
-            solo_key = "cba" if show_cba else "pba"
-            values = [_extract_value(sd.get(subprocess_name), solo_key) for sd in all_scenarios_data]
+            values = cba_values if show_cba else pba_values
+        # L'échelle radiale (graduations "NL", plafond) est toujours calée sur
+        # le max CBA/PBA, même en solo (show_cba seul ou show_pba seul) : une
+        # figure PBA seule doit avoir la même graduation qu'une figure CBA
+        # seule ou combinée pour le même secteur, pas une graduation resserrée
+        # sur ses seules valeurs affichées.
+        scale_values = cba_values + pba_values
 
         # Dépassement du scénario de référence (base_year) par rapport à la
         # Lower Bound (max CBA/PBA en mode combiné, même logique que
@@ -429,16 +459,18 @@ def create_radial_synthesis_figure(
 
         if threshold_ref is not None:
             rel_values = [(v / threshold_ref) if v is not None else None for v in values]
+            scale_rel_values = [(v / threshold_ref) if v is not None else None for v in scale_values]
             ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
             lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
             dls_rel = (floor_ub / threshold_ref) if floor_ub is not None else None
         else:
             rel_values = [None] * n_slots
+            scale_rel_values = []
             ub_rel = None
             lb_rel = None
             dls_rel = None
 
-        for rel in rel_values + [ub_rel, lb_rel, dls_rel]:
+        for rel in scale_rel_values + [ub_rel, lb_rel, dls_rel]:
             if rel is not None and np.isfinite(rel):
                 max_rel = max(max_rel, rel)
 
@@ -462,13 +494,18 @@ def create_radial_synthesis_figure(
     r_ring_start = r_max_plot
     r_ring_end = r_ring_start + ring_thickness
     r_label = r_max_plot * 0.78
+    # Rayon des noms de scénario rappelés au-dessus des cases de la bande
+    # extérieure (SCENARIO_LABEL_SUBPROCESSES uniquement) -- juste à
+    # l'extérieur de la bande, voir _nice_radial_ticks/set_rlim plus bas.
+    r_scenario_label = r_ring_end + ring_thickness * 0.7
+    has_scenario_labels = any(name in SCENARIO_LABEL_SUBPROCESSES for name in subprocesses)
 
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection="polar")
     # Marges par défaut de matplotlib très généreuses pour un unique subplot
     # (~12% de chaque côté) : on les resserre pour que le cercle remplisse la
-    # figure, avec juste la place nécessaire au-dessus pour le titre/sous-titre
-    # et en-dessous pour la légende (positionnés juste après, au ras de ces
+    # figure, avec juste la place nécessaire au-dessus pour le titre et
+    # en-dessous pour la légende (positionnés juste après, au ras de ces
     # nouvelles bornes).
     fig.subplots_adjust(left=0.03, right=0.97, top=0.93, bottom=0.058)
     ax.set_theta_zero_location("N")
@@ -500,26 +537,32 @@ def create_radial_synthesis_figure(
         bar_width = geo["bar_width"]
         ring_centers = geo["ring_centers"][lp_idx]
 
-        def _bar_hatch(scenario_idx, is_import=False):
-            # Hachurage "xx" en plus pour le scénario de référence (base_year),
-            # combinable avec le "/" de l'import (ex. "/xx") -- matplotlib
-            # superpose les motifs d'une chaîne hatch à plusieurs caractères.
-            hatch = ("/" if is_import else "") + ("xx" if scenario_idx == reference_idx else "")
-            return hatch or None
+        def _bar_hatch(is_import=False):
+            # Hachurage "/" pour l'importé uniquement (le scénario de
+            # référence n'est plus hachuré, voir _solo_color).
+            return "/" if is_import else None
+
+        # PBA : toujours en nuance plus claire de la couleur du LP.
+        pba_color = colors.get_light_shade(info["color"], 1.5)
+
+        def _solo_color(scenario_idx):
+            # Hors mode combiné, CBA et PBA partagent désormais une seule
+            # couleur par LP (celle du PBA) : les deux nuances ne servent
+            # plus à distinguer CBA/PBA (il n'y en a qu'un affiché) mais le
+            # scénario de référence (base_year, nuance pleine -- l'ancienne
+            # couleur "CBA") des autres scénarios (nuance claire), à la place
+            # du hachurage "xx" utilisé auparavant.
+            return info["color"] if scenario_idx == reference_idx else pba_color
 
         def _draw_cba_bar(theta, scenario_idx):
             payload = all_scenarios_data[scenario_idx].get(info["name"])
+            fallback_color = info["color"] if combined else _solo_color(scenario_idx)
             segments = _stack_segments(payload, info["categories"], info["threshold_ref"], group_by_category,
-                                        show_categories, show_import_split, info["color"])
+                                        show_categories, show_import_split, fallback_color)
             for rel_bottom, rel_top, color, is_import in segments:
                 ax.bar([theta], [to_r(rel_top) - to_r(rel_bottom)], width=bar_width, bottom=to_r(rel_bottom),
                        color=color, edgecolor="white", linewidth=0.4,
-                       hatch=_bar_hatch(scenario_idx, is_import), zorder=5)
-
-        # PBA : toujours en nuance plus claire de la couleur du LP (au lieu
-        # d'un hachurage) -- que ce soit la seule comptabilité affichée ou en
-        # complément du CBA en mode combiné.
-        pba_color = colors.get_light_shade(info["color"], 1.5)
+                       hatch=_bar_hatch(is_import), zorder=5)
 
         if combined:
             # 2 barres adjacentes par scénario -- CBA (empilée comme
@@ -530,15 +573,14 @@ def create_radial_synthesis_figure(
             pba_heights = [to_r(rel) if rel is not None else 0.0 for rel in info["rel_values"][1::2]]
             for scenario_idx, (theta, height) in enumerate(zip(pba_centers, pba_heights)):
                 ax.bar([theta], [height], width=bar_width, bottom=0.0,
-                       color=pba_color, edgecolor="white", linewidth=0.6,
-                       hatch=_bar_hatch(scenario_idx), zorder=5)
+                       color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
         elif show_cba:
             # Empreinte détaillée disponible (domestique/importé par catégorie) :
             # barre empilée selon show_categories/show_import_split (les deux à
-            # False -> 1 segment plein, coloré par le LP). to_r() est appliqué
-            # aux BORNES cumulées (pas à la hauteur du segment), seule façon
-            # correcte de rester cohérent avec le cercle LB/l'arc UB en échelle
-            # non-linéaire (radial_power != 1).
+            # False -> 1 segment plein, coloré par _solo_color). to_r() est
+            # appliqué aux BORNES cumulées (pas à la hauteur du segment), seule
+            # façon correcte de rester cohérent avec le cercle LB/l'arc UB en
+            # échelle non-linéaire (radial_power != 1).
             for scenario_idx, theta in enumerate(centers):
                 _draw_cba_bar(theta, scenario_idx)
         else:
@@ -547,23 +589,22 @@ def create_radial_synthesis_figure(
             heights = [to_r(rel) if rel is not None else 0.0 for rel in info["rel_values"]]
             for scenario_idx, (theta, height) in enumerate(zip(centers, heights)):
                 ax.bar([theta], [height], width=bar_width, bottom=0.0,
-                       color=pba_color, edgecolor="white", linewidth=0.6,
-                       hatch=_bar_hatch(scenario_idx), zorder=5)
+                       color=_solo_color(scenario_idx), edgecolor="white", linewidth=0.6, zorder=5)
 
         # Bande extérieure : pavage complet du secteur (ring_centers/ring_width,
         # sans le gap_frac des barres) pour ne laisser aucun vide entre
         # scénarios ni entre secteurs. En mode combiné, la moitié PBA reprend
-        # la nuance claire de la barre correspondante ; sinon toute la bande
-        # suit la couleur (pleine ou claire) de la comptabilité affichée.
+        # la nuance claire de la barre correspondante ; sinon chaque case suit
+        # la couleur de la barre du scénario correspondant (_solo_color).
         if combined:
             ax.bar(ring_centers[0::2], [ring_thickness] * n_scenarios, width=geo["ring_width"], bottom=r_ring_start,
                    color=info["color"], edgecolor="white", linewidth=0.6, zorder=5)
             ax.bar(ring_centers[1::2], [ring_thickness] * n_scenarios, width=geo["ring_width"], bottom=r_ring_start,
                    color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
         else:
-            ring_color = info["color"] if show_cba else pba_color
+            ring_colors = [_solo_color(scenario_idx) for scenario_idx in range(n_scenarios)]
             ax.bar(ring_centers, [ring_thickness] * n_scenarios, width=geo["ring_width"], bottom=r_ring_start,
-                   color=ring_color, edgecolor="white", linewidth=0.6, zorder=5)
+                   color=ring_colors, edgecolor="white", linewidth=0.6, zorder=5)
 
         # Texte de la bande : valeur/scénario de référence en fonction du
         # créneau (CBA ou PBA) en mode combiné, de la seule comptabilité
@@ -576,7 +617,10 @@ def create_radial_synthesis_figure(
         else:
             ref_by_slot = [info["values"][reference_idx]] * n_slots
             is_ref_by_slot = [i == reference_idx for i in range(n_slots)]
-            is_pba_by_slot = [show_pba] * n_slots
+            # Une seule comptabilité affichée : la couleur des variations
+            # s'aligne toujours sur le style PBA (rouge/vert saturé), que ce
+            # soit le CBA ou le PBA qui soit affiché seul.
+            is_pba_by_slot = [True] * n_slots
 
         r_ring_mid = (r_ring_start + r_ring_end) / 2
         for i, theta in enumerate(ring_centers):
@@ -586,6 +630,21 @@ def create_radial_synthesis_figure(
             text, color = _annotate(val, ref_by_slot[i], is_ref_by_slot[i], is_pba_by_slot[i])
             ax.text(theta, r_ring_mid, text, ha="center", va="center",
                     fontsize=14.5, fontweight="bold", color=color, zorder=9)
+
+        # Nom du scénario rappelé au-dessus de la/les case(s) de la bande
+        # extérieure -- seulement pour les 2 LP opposés sur la roue
+        # (remplace le sous-titre "Scenario order : ..." global). En mode
+        # combiné, un scénario occupe 2 cases adjacentes (CBA puis PBA) : le
+        # nom est centré au-dessus des deux.
+        if info["name"] in SCENARIO_LABEL_SUBPROCESSES:
+            for scenario_idx in range(n_scenarios):
+                if combined:
+                    theta_label = (ring_centers[scenario_idx * 2] + ring_centers[scenario_idx * 2 + 1]) / 2
+                else:
+                    theta_label = ring_centers[scenario_idx]
+                ax.text(theta_label, r_scenario_label, scenario_names[scenario_idx], ha="center", va="center",
+                        fontsize=12, fontweight="bold", color="#333333",
+                        rotation=_tangential_rotation_deg(theta_label), rotation_mode="anchor", zorder=9)
 
         if info["use_ub_ref"]:
             # Secteur recalé sur la Upper Bound (voir docstring de
@@ -626,13 +685,13 @@ def create_radial_synthesis_figure(
         ring_color = UB_COLOR if info["use_ub_ref"] else LB_COLOR
         ax.plot(theta_arc, np.full_like(theta_arc, to_r(1.0)), color=ring_color, linewidth=3.2, zorder=8)
 
-    ax.set_rlim(0, r_ring_end * 1.02)
+    r_axis_max = (r_scenario_label + ring_thickness * 0.6) if has_scenario_labels else (r_ring_end * 1.02)
+    ax.set_rlim(0, r_axis_max)
 
     # Légende : lignes de seuil communes aux deux figures, puis les catégories
     # si affichées (CBA avec show_categories=True -- explique l'habillage des
     # barres empilées) et/ou l'entrée "Import" seule si la distinction dom/imp
-    # est affichée sans les catégories. Aucune entrée par scénario : les
-    # barres/segments ne sont plus nuancées par scénario (voir plus haut).
+    # est affichée sans les catégories.
     legend_handles = [
         Line2D([0], [0], color=LB_COLOR, linewidth=3, label="Lower Bound"),
         Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Bound"),
@@ -652,22 +711,18 @@ def create_radial_synthesis_figure(
 
     if combined:
         # Repère générique (gris neutre) pour la nuance claire du PBA, valable
-        # pour tous les LP.
+        # pour tous les LP : les deux nuances distinguent ici CBA/PBA.
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Consumption-based"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Production-based"))
-
-    legend_handles.append(Patch(facecolor="white", edgecolor="black", hatch="xx", linewidth=1,
-                                 label=f"Base year"))
+    else:
+        # Une seule comptabilité affichée : les deux nuances distinguent à la
+        # place le scénario de référence des autres (voir _solo_color).
+        legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Base year"))
+        legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Other scenarios"))
 
     fig.legend(handles=legend_handles, loc="lower center", ncol=min(5, len(legend_handles)),
                bbox_to_anchor=(0.5, 0.015), frameon=False, fontsize=15)
 
-    # Ordre (fixe) des scénarios au sein de chaque secteur, en légende textuelle
-    # puisque les barres CBA n'encodent plus le scénario par couleur (seule la
-    # bande extérieure et la position angulaire l'identifient). Positionné juste
-    # au-dessus de la nouvelle borne haute des axes (subplots_adjust top=0.91).
-    caption = "Scenario order : " + " → ".join(scenario_names)
-    fig.text(0.5, 0.94, caption, ha="center", fontsize=16, style="italic", color="#333333")
     fig.suptitle(title, fontsize=18, fontweight="bold", y=0.975)
 
     return fig, ax
