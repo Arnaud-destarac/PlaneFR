@@ -214,7 +214,7 @@ def _draw_lp_title_above(ax, name, unit_text, ceiling, gap_below_bar, gap_above_
 def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
-    ub_color="#bc270a", x_main_max=8.0,
+    ub_color="#bc270a", x_main_max=8.0, display_bounds=True,
     show_pba=False, show_value_labels=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
@@ -234,7 +234,16 @@ def create_overshoot_safe_space_figure(
         threshold_lb_row, threshold_ub_row, unit_row: noms des lignes à lire
             dans seuils_df — passer les constantes _ABS de planefr_lib.config
             pour la figure en valeurs absolues, _PER_CAPITA pour la figure par
-            habitant.
+            habitant. Le 3e seuil ("Lower Safe Bound", vert clair) est déduit
+            automatiquement de threshold_lb_row via config.THRESHOLD_LOWER_FOR
+            (pas de paramètre dédié). Les 3 traits reprennent le nom des lignes
+            "brutes" de seuils.xlsx/feuille "Synthèse" : "Lower Safe Bound"
+            (vert clair), "Safe Limit" (vert, seuil historique threshold_lb_row),
+            "Upper Safe Bound" (rouge, threshold_ub_row).
+        display_bounds: True (défaut) affiche les 3 traits (Lower Safe Bound,
+            Safe Limit, Upper Safe Bound). False n'affiche que Safe Limit
+            (masque Lower Safe Bound et Upper Safe Bound, ainsi que leurs
+            entrées de légende).
         show_pba: si True, cherche une clé "pba" dans chaque payload et trace
             une seconde bulle hachurée (production-based accounting).
         show_value_labels: si True, affiche la valeur absolue à côté de chaque
@@ -303,6 +312,12 @@ def create_overshoot_safe_space_figure(
                                               pop_df=pop_df, sharing_principle=sharing_principle)
         ub_val = processing.lookup_threshold(seuils_df, threshold_ub_row, subprocess_name,
                                               pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_lower_row = config.THRESHOLD_LOWER_FOR.get(threshold_lb_row)
+        lower_val = (
+            processing.lookup_threshold(seuils_df, threshold_lower_row, subprocess_name,
+                                         pop_df=pop_df, sharing_principle=sharing_principle)
+            if threshold_lower_row else None
+        )
 
         if lb_val is None:
             ax.text(0.5, 0.5, f"{subprocess_name}: limite basse manquante", transform=ax.transAxes,
@@ -314,6 +329,7 @@ def create_overshoot_safe_space_figure(
             continue
 
         ub_rel = (ub_val / lb_val) if ub_val is not None else None
+        lower_rel = (lower_val / lb_val) if lower_val is not None else None
 
         # Calcul des positions relatives (CBA, et PBA si demandé) par scénario
         points = []
@@ -369,11 +385,17 @@ def create_overshoot_safe_space_figure(
         else:
             ax_ext.set_visible(False)
 
-        # Traits + valeurs des limites (indépendants du dégradé de fond)
+        # Traits + valeurs des limites (indépendants du dégradé de fond) : Safe
+        # Limit (vert, seuil historique) toujours affiché ; Lower/Upper Safe
+        # Bound (vert clair/rouge) uniquement si display_bounds=True.
+        if display_bounds and lower_rel is not None and lower_rel >= 0:
+            ax.axvline(lower_rel, ymin=0.10, ymax=0.90, color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3, zorder=3)
+            ax.text(lower_rel, 0.93, _fmt_abs(lower_val), color=config.LOWER_SAFE_BOUND_COLOR, fontsize=11,
+                    fontweight="bold", ha="center", va="bottom", zorder=5)
         ax.axvline(1, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
         ax.text(1, 0.93, _fmt_abs(lb_val), color="#0d9a33", fontsize=11, fontweight="bold",
                 ha="center", va="bottom", zorder=5)
-        if ub_rel is not None and ub_rel <= x_main_max:
+        if display_bounds and ub_rel is not None and ub_rel <= x_main_max:
             ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
             ax.text(ub_rel, 0.93, _fmt_abs(ub_val), color=ub_color, fontsize=11, fontweight="bold",
                     ha="center", va="bottom", zorder=5)
@@ -451,10 +473,13 @@ def create_overshoot_safe_space_figure(
                markeredgewidth=1.3, markersize=15, label=n)
         for n in scenario_names
     ]
-    limit_handles = [
-        Line2D([0], [0], color="#0d9a33", linewidth=3.5, label="Lower Bound"),
-        Line2D([0], [0], color=ub_color, linewidth=3.5, label="Upper Bound"),
-    ]
+    limit_handles = [Line2D([0], [0], color="#0d9a33", linewidth=3.5, label="Safe Limit")]
+    if display_bounds:
+        limit_handles = [
+            Line2D([0], [0], color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3.5, label="Lower Safe Bound"),
+            *limit_handles,
+            Line2D([0], [0], color=ub_color, linewidth=3.5, label="Upper Safe Bound"),
+        ]
     legend_handles = scenario_handles + limit_handles
     if show_pba:
         legend_handles += [

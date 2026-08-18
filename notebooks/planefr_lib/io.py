@@ -9,6 +9,7 @@ l'absence d'un fichier pour certaines combinaisons scénario x sous-processus
 est un cas normal (ex. ghg_combustion absent des scénarios World/Europe).
 """
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -46,8 +47,15 @@ def load_bridge_m_matrix():
 
 
 def load_seuils():
-    """Feuille 'Synthèse' de seuils.xlsx : seuils/limites planétaires par sous-processus."""
-    return pd.read_excel(config.SEUILS_FILE, sheet_name="Synthèse", index_col=0)
+    """Feuille 'Synthèse' de seuils.xlsx : seuils/limites planétaires par sous-processus.
+
+    Les noms de ligne y sont normalisés (espaces superflus réduits à un seul,
+    début/fin retirés) : la feuille contient plusieurs libellés avec des doubles
+    espaces ou espaces de fin (ex. "Unit conversion Exiobase  (p.cap)"), qui
+    casseraient sinon les lookups par nom exact (cf. planefr_lib.config)."""
+    df = pd.read_excel(config.SEUILS_FILE, sheet_name="Synthèse", index_col=0)
+    df.index = df.index.map(lambda x: re.sub(r"\s+", " ", x).strip() if isinstance(x, str) else x)
+    return df
 
 
 def load_dls():

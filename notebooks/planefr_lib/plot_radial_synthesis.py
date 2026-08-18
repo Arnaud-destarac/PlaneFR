@@ -1,7 +1,7 @@
 """
 Figure "roue radiale des limites planétaires" : 1 secteur (wedge) par LP, avec
-1 barre radiale par scénario (hauteur = valeur / Lower Bound, donc la Lower
-Bound est un cercle de rayon constant = 1L), une bande extérieure annotée
+1 barre radiale par scénario (hauteur = valeur / Safe Limit, donc le Safe
+Limit est un cercle de rayon constant = 1L), une bande extérieure annotée
 (1 sous-bande par scénario) et un nom de LP + unité par secteur.
 
 Une seule fonction, pilotée par 2 booléens indépendants show_cba/show_pba
@@ -65,14 +65,15 @@ LP_COLORS = {
 }
 _FALLBACK_LP_COLOR = "#4c78a8"
 
-LB_COLOR = "#0d9a33"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Lower Bound")
-UB_COLOR = "#bc270a"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Upper Bound")
+LB_COLOR = "#0d9a33"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Safe Limit")
+UB_COLOR = "#bc270a"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Upper Safe Bound")
 DLS_COLOR = "cyan"      # identique à plot_stacked_bar.py ("DLS")
+LOWER_COLOR = config.LOWER_SAFE_BOUND_COLOR  # identique à plot_stacked_bar.py / plot_overshoot.py ("Lower Safe Bound")
 
 # En radial_power=1 (échelle linéaire stricte), un secteur dont le scénario de
-# référence (base_year) dépasse la Lower Bound de plus que ce facteur ferait
+# référence (base_year) dépasse la Safe Limit de plus que ce facteur ferait
 # exploser l'échelle radiale de tous les secteurs. Pour ce secteur uniquement,
-# on recale alors la référence sur la Upper Bound (voir use_ub_ref plus bas) :
+# on recale alors la référence sur la Upper Safe Bound (voir use_ub_ref plus bas) :
 # le cercle "1L" y devient rouge (UB) au lieu de vert (LB).
 
 OVERSHOOT_REBASE_THRESHOLD = 4.0
@@ -151,12 +152,12 @@ def _tangential_rotation_deg(theta_rad):
 
 
 def _nice_radial_ticks(rel_cap, max_ticks=6):
-    """Graduations entières (en multiples de la Lower Bound) de 1 à floor(rel_cap)
+    """Graduations entières (en multiples de la Safe Limit) de 1 à floor(rel_cap)
     (le plafond radial réel étant fixé séparément, juste au-dessus de rel_cap --
     voir RADIAL_AXIS_MARGIN_FRAC -- une graduation à rel_cap lui-même n'aurait
     pas de sens si ce n'est pas un entier), en sous-échantillonnant si trop
     nombreuses (même idée que plot_overshoot._set_break_axis_ticks). 1L est
-    toujours inclus (cercle Lower Bound)."""
+    toujours inclus (cercle Safe Limit)."""
     r_floor = max(1, int(np.floor(rel_cap)))
     ticks = list(range(1, r_floor + 1))
     if len(ticks) > max_ticks:
@@ -187,8 +188,8 @@ def _extract_value(payload, value_key):
 def _stack_segments(payload, categories, threshold_ref, group_by_category,
                      show_categories, show_import_split, fallback_color):
     """Décompose l'empreinte CBA d'un (LP, scénario) en segments empilables, en
-    unités relatives à threshold_ref (Lower Bound, sauf secteur recalé sur la
-    Upper Bound -- voir use_ub_ref dans create_radial_synthesis_figure), prêts
+    unités relatives à threshold_ref (Safe Limit, sauf secteur recalé sur la
+    Upper Safe Bound -- voir use_ub_ref dans create_radial_synthesis_figure), prêts
     à dessiner (couleur déjà résolue). to_r() doit être appliqué aux BORNES
     cumulées par l'appelant (pas à la hauteur du segment), seule façon de
     rester correct en échelle non-linéaire (radial_power != 1).
@@ -280,17 +281,24 @@ def create_radial_synthesis_figure(
     show_categories=True, show_import_split=True, group_by_category=False,
     lp_colors=None,
     r_max=None,
+    display_bounds=True,
     title=None,
     figsize=(16, 16),
     sharing_principle=None, pop_df=None,
 ):
     """Roue radiale : 1 secteur par LP, 1 barre par scénario, hauteur = valeur /
-    Lower Bound. Le cercle Lower Bound (vert) est donc à rayon constant = 1L
-    sur toute la figure ; l'arc Upper Bound (rouge) est propre à chaque secteur
-    (le ratio Upper/Lower Bound varie selon le LP). Bande extérieure : reprend
-    l'annotation de create_synthesis_figure_by_lp (valeur absolue pour le
-    scénario de référence, variation % pour les autres), repositionnée en
-    1 sous-bande par scénario.
+    Safe Limit. Le cercle Safe Limit (vert, seuil historique config.THRESHOLD_LB_ABS)
+    est donc à rayon constant = 1L sur toute la figure ; l'arc Upper Safe Bound
+    (rouge, config.THRESHOLD_UB_ABS) et l'arc Lower Safe Bound (vert clair,
+    config.THRESHOLD_LOWER_ABS, toujours en-deçà du Safe Limit) sont propres à
+    chaque secteur (leur ratio au Safe Limit varie selon le LP) -- ces 3 noms
+    reprennent les lignes "brutes" de seuils.xlsx/feuille "Synthèse" ("Lower
+    safe bound"/"Safe limit"/"Upper safe bound"). display_bounds=False masque
+    Lower Safe Bound et Upper Safe Bound (seul le cercle Safe Limit reste
+    affiché). Bande extérieure : reprend l'annotation de
+    create_synthesis_figure_by_lp (valeur absolue pour le scénario de
+    référence, variation % pour les autres), repositionnée en 1 sous-bande par
+    scénario.
 
     Args:
         all_scenarios_data: liste de {lp_name: résultat de process_scenario},
@@ -332,25 +340,29 @@ def create_radial_synthesis_figure(
             LP en-deçà de leur limite (ex. Blue water consumption, <1L) sont
             étirés vers l'extérieur et donc plus visibles, tandis que les LP en
             fort dépassement (ex. GHG emissions) sont d'autant plus compressés
-            -- même principe que sqrt, en plus prononcé. Le cercle Lower Bound
+            -- même principe que sqrt, en plus prononcé. Le cercle Safe Limit
             reste à un rayon constant (=1) quelle que soit la valeur, car 1
             élevé à n'importe quelle puissance vaut toujours 1.
             Cas particulier radial_power=1 (échelle linéaire, donc sans
             compression des forts dépassements) : pour un secteur dont le
-            scénario de référence (base_year) dépasse la Lower Bound de plus
+            scénario de référence (base_year) dépasse la Safe Limit de plus
             de OVERSHOOT_REBASE_THRESHOLD (5), la référence de CE secteur est
-            recalée sur la Upper Bound au lieu de la Lower Bound (use_ub_ref).
+            recalée sur la Upper Safe Bound au lieu de la Safe Limit (use_ub_ref).
             Concrètement, dans ce secteur : les barres/segments sont exprimés
-            en multiples de la Upper Bound, l'arc Upper Bound se retrouve
-            au rayon 1 (rouge) au lieu de l'arc Lower Bound (vert), et la
-            Lower Bound (< 1) reste tracée, positionnée relativement à cette
+            en multiples de la Upper Safe Bound, l'arc Upper Safe Bound se retrouve
+            au rayon 1 (rouge) au lieu de l'arc Safe Limit (vert), et la
+            Safe Limit (< 1) reste tracée, positionnée relativement à cette
             nouvelle référence. Le "cercle à 1L" de la figure est donc, dans
             ce mode, composite : vert pour les secteurs sous le seuil de
             dépassement, rouge pour ceux au-dessus.
         lp_colors: dict optionnel pour surcharger/étendre LP_COLORS.
-        r_max: plafond optionnel de l'axe radial, en multiples de la Lower
-            Bound (même unité que les graduations "NL") ; None = auto-calculé
-            depuis les données (valeurs + seuils UB/DLS affichés).
+        r_max: plafond optionnel de l'axe radial, en multiples du Safe Limit
+            (même unité que les graduations "NL") ; None = auto-calculé depuis
+            les données (valeurs + seuils affichés -- Upper/Lower Safe Bound
+            si display_bounds=True, DLS si show_dls=True).
+        display_bounds: True (défaut) affiche les arcs Lower Safe Bound et
+            Upper Safe Bound en plus du cercle Safe Limit (toujours affiché).
+            False les masque (et ne les compte plus dans le calcul de r_max).
         title: préfixe de titre optionnel (ex. "Planetary boundaries assessment
             of French NZE Scenarios") ; le suffixe (" - Consumption-based",
             " - Production-based" ou " - CBA vs PBA") est ajouté automatiquement
@@ -411,7 +423,9 @@ def create_radial_synthesis_figure(
                                                     pop_df=pop_df, sharing_principle=sharing_principle)
         threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
                                                     pop_df=pop_df, sharing_principle=sharing_principle)
-        unit_text = processing.lookup_first_text(seuils_df, ["Unité d'affichage", "Unité affichage"], subprocess_name)
+        threshold_lower = processing.lookup_threshold(seuils_df, config.THRESHOLD_LOWER_ABS, subprocess_name,
+                                                        pop_df=pop_df, sharing_principle=sharing_principle)
+        unit_text = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, subprocess_name)
         floor_ub = None
         if show_dls and dls_df is not None:
             floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True)
@@ -436,9 +450,9 @@ def create_radial_synthesis_figure(
         scale_values = cba_values + pba_values
 
         # Dépassement du scénario de référence (base_year) par rapport à la
-        # Lower Bound (max CBA/PBA en mode combiné, même logique que
+        # Safe Limit (max CBA/PBA en mode combiné, même logique que
         # plot_overshoot._sort_subprocesses_by_france_overshoot) : détermine
-        # si ce secteur doit être recalé sur la Upper Bound (voir use_ub_ref
+        # si ce secteur doit être recalé sur la Upper Safe Bound (voir use_ub_ref
         # dans la docstring de radial_power). Uniquement en radial_power=1 --
         # aux autres puissances, la compression de l'échelle rend ce recalage
         # inutile.
@@ -462,22 +476,25 @@ def create_radial_synthesis_figure(
             scale_rel_values = [(v / threshold_ref) if v is not None else None for v in scale_values]
             ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
             lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
+            lower_rel = (threshold_lower / threshold_ref) if threshold_lower is not None else None
             dls_rel = (floor_ub / threshold_ref) if floor_ub is not None else None
         else:
             rel_values = [None] * n_slots
             scale_rel_values = []
             ub_rel = None
             lb_rel = None
+            lower_rel = None
             dls_rel = None
 
-        for rel in scale_rel_values + [ub_rel, lb_rel, dls_rel]:
+        bound_rels = [ub_rel, lower_rel] if display_bounds else []
+        for rel in scale_rel_values + [lb_rel, dls_rel] + bound_rels:
             if rel is not None and np.isfinite(rel):
                 max_rel = max(max_rel, rel)
 
         lp_info.append(dict(
             name=subprocess_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
-            values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, dls_rel=dls_rel,
-            use_ub_ref=use_ub_ref, color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
+            values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, lower_rel=lower_rel,
+            dls_rel=dls_rel, use_ub_ref=use_ub_ref, color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
         ))
 
     # Le plafond radial est fixé juste au-dessus (RADIAL_AXIS_MARGIN_FRAC) de la
@@ -520,7 +537,7 @@ def create_radial_synthesis_figure(
     theta_full = np.linspace(0, 2 * np.pi, 400)
     for t in rel_ticks:
         if t == 1:
-            continue  # tracé séparément, en gras, comme cercle Lower Bound
+            continue  # tracé séparément, en gras, comme cercle Safe Limit
         ax.plot(theta_full, np.full_like(theta_full, to_r(t)), color="#e0e0e0", linewidth=0.7, zorder=1)
 
     for b in geo["boundaries"]:
@@ -647,18 +664,28 @@ def create_radial_synthesis_figure(
                         rotation=_tangential_rotation_deg(theta_label), rotation_mode="anchor", zorder=9)
 
         if info["use_ub_ref"]:
-            # Secteur recalé sur la Upper Bound (voir docstring de
-            # radial_power) : la Upper Bound est désormais le repère "1L" du
-            # secteur (tracée plus bas avec le cercle composite LB/UB), donc
-            # seule la Lower Bound (< 1L) reste à afficher ici, positionnée
-            # relativement à cette nouvelle référence.
+            # Secteur recalé sur la Upper Safe Bound (voir docstring de
+            # radial_power) : la Upper Safe Bound est désormais le repère "1L"
+            # du secteur (tracée plus bas avec le cercle composite Safe
+            # Limit/Upper Safe Bound), donc seul le Safe Limit (< 1L, toujours
+            # affiché -- ce n'est pas un des 2 "bounds" contrôlés par
+            # display_bounds) reste à afficher ici, positionné relativement à
+            # cette nouvelle référence.
             if info["lb_rel"] is not None:
                 theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
                 ax.plot(theta_arc, np.full_like(theta_arc, to_r(info["lb_rel"])), color=LB_COLOR,
                         linewidth=3.0, solid_capstyle="butt", zorder=8)
-        elif info["ub_rel"] is not None:
+        elif display_bounds and info["ub_rel"] is not None:
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
             ax.plot(theta_arc, np.full_like(theta_arc, to_r(info["ub_rel"])), color=UB_COLOR,
+                    linewidth=3.0, solid_capstyle="butt", zorder=8)
+
+        if display_bounds and info["lower_rel"] is not None:
+            # Toujours tracé quand display_bounds=True (que le secteur soit
+            # recalé sur la Upper Safe Bound ou non) : le Lower Safe Bound
+            # reste un repère indépendant, en-deçà du Safe Limit.
+            theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
+            ax.plot(theta_arc, np.full_like(theta_arc, to_r(info["lower_rel"])), color=LOWER_COLOR,
                     linewidth=3.0, solid_capstyle="butt", zorder=8)
 
         if info["dls_rel"] is not None:
@@ -675,8 +702,8 @@ def create_radial_synthesis_figure(
 
     # Cercle "1L" : rayon constant = 1 (point fixe de to_r, quel que soit
     # radial_power), tracé par-dessus les barres, secteur par secteur (au lieu
-    # d'un unique cercle plein) pour pouvoir varier sa couleur -- vert (Lower
-    # Bound, cas normal) ou rouge (Upper Bound, secteur recalé via use_ub_ref,
+    # d'un unique cercle plein) pour pouvoir varier sa couleur -- vert (Safe
+    # Limit, cas normal) ou rouge (Upper Safe Bound, secteur recalé via use_ub_ref,
     # voir docstring de radial_power). Les arcs pavent tout wedge_span (pas de
     # gap) pour rester visuellement un cercle continu quand tous les secteurs
     # sont dans le même mode.
@@ -692,10 +719,13 @@ def create_radial_synthesis_figure(
     # si affichées (CBA avec show_categories=True -- explique l'habillage des
     # barres empilées) et/ou l'entrée "Import" seule si la distinction dom/imp
     # est affichée sans les catégories.
-    legend_handles = [
-        Line2D([0], [0], color=LB_COLOR, linewidth=3, label="Lower Bound"),
-        Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Bound"),
-    ]
+    legend_handles = [Line2D([0], [0], color=LB_COLOR, linewidth=3, label="Safe Limit")]
+    if display_bounds:
+        legend_handles = [
+            Line2D([0], [0], color=LOWER_COLOR, linewidth=3, label="Lower Safe Bound"),
+            *legend_handles,
+            Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Safe Bound"),
+        ]
     if show_dls:
         legend_handles.append(Line2D([0], [0], color=DLS_COLOR, linestyle="--", linewidth=3, label="DLS"))
 
