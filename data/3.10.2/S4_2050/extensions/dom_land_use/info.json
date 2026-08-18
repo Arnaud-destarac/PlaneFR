@@ -1,0 +1,7 @@
+{
+  "base_year": 2015,
+  "proj_year": "2050",
+  "scenario_name": "S4",
+  "extension_name": "dom_land_use",
+  "strategy": "gross_output_based"
+}

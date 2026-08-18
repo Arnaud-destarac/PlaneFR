@@ -120,8 +120,8 @@ def lookup_seuil(seuils_df, row_name, column_name, require_positive=False):
 
 def lookup_first_text(seuils_df, row_names, column_name):
     """Essaie plusieurs noms de ligne candidats dans l'ordre (utile car seuils.xlsx
-    n'est pas toujours orthographié à l'identique, ex. "Unité affichage" vs "Unité
-    d'affichage"), retourne le premier texte non-NaN trouvé, ou "" sinon."""
+    n'est pas toujours orthographié à l'identique), retourne le premier texte
+    non-NaN trouvé, ou "" sinon."""
     if isinstance(row_names, str):
         row_names = [row_names]
     try:
@@ -138,10 +138,11 @@ def lookup_first_text(seuils_df, row_names, column_name):
 # ============================================================================
 # SEUILS RECALCULÉS SELON UN PRINCIPE DE PARTAGE ("sharing_principle")
 # ============================================================================
-# Remplace la lecture statique de "Égalité"/"Égalité (p. hab)" (et leurs variantes
-# limite haute) par un partage égal per capita du budget mondial ("Budget Global
-# annuel"/"Limite haute"), pour une période de référence choisie par sharing_principle
-# (voir config.SHARING_PRINCIPLE_POPULATION_ROW).
+# Remplace la lecture statique de "Equality (Lower bound)"/"Equality"/"Equality
+# (Upper bound)" (et leurs variantes par habitant) par un partage égal per capita
+# du budget mondial ("Lower safe bound"/"Safe limit"/"Upper safe bound"), pour une
+# période de référence choisie par sharing_principle (voir
+# config.SHARING_PRINCIPLE_POPULATION_ROW).
 
 
 def lookup_population(pop_df, population_row, column_name):
@@ -151,20 +152,21 @@ def lookup_population(pop_df, population_row, column_name):
 
 
 def compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle, threshold_row_name):
-    """Seuil LB/UB, par capita ou national (France), recalculé selon un principe de
-    partage égalitaire du budget mondial, en remplacement de la valeur statique que
-    lookup_seuil aurait lue pour `threshold_row_name` (une des 4 constantes
-    THRESHOLD_LB/UB_ABS/PER_CAPITA de config).
+    """Seuil LOWER/LB/UB, par capita ou national (France), recalculé selon un principe
+    de partage égalitaire du budget mondial, en remplacement de la valeur statique que
+    lookup_seuil aurait lue pour `threshold_row_name` (une des 6 constantes
+    THRESHOLD_LOWER/LB/UB_ABS/PER_CAPITA de config).
 
     Formule (partage égal per capita) :
-        seuil_p_hab = Budget_mondial(LB ou UB) / Conversion_budget_p_hab / Population_Monde(réf)
-        seuil_france = Budget_mondial(LB ou UB) / Conversion_budget / Population_Monde(réf) * Population_France(réf)
+        seuil_p_hab = Budget_mondial(LOWER, LB ou UB) / Conversion_budget_p_hab / Population_Monde(réf)
+        seuil_france = Budget_mondial(LOWER, LB ou UB) / Conversion_budget / Population_Monde(réf) * Population_France(réf)
 
-    où Budget_mondial(LB)="Budget Global annuel", Budget_mondial(UB)="Limite haute" (dans
-    l'unité mondiale "Unité"), Conversion_budget/Conversion_budget_p_hab convertissent
-    cette unité mondiale vers "Unité affichage"/"Unité affichage (p.hab)" (mêmes lignes
-    utilisées en diviseur que CONVERSION_ROW_ABS/CONVERSION_ROW_PER_CAPITA), et réf est la
-    ligne de la feuille "Population" associée à sharing_principle.
+    où Budget_mondial(LOWER)="Lower safe bound", Budget_mondial(LB)="Safe limit",
+    Budget_mondial(UB)="Upper safe bound" (dans l'unité mondiale "Unit budget"),
+    Conversion_budget/Conversion_budget_p_hab convertissent cette unité mondiale vers
+    "Figures unit"/"Figures unit (p.cap)" (mêmes lignes utilisées en diviseur que
+    CONVERSION_ROW_ABS/CONVERSION_ROW_PER_CAPITA), et réf est la ligne de la feuille
+    "Population" associée à sharing_principle.
 
     Returns:
         float, ou None si une donnée nécessaire est absente (budget/conversion manquant
@@ -176,9 +178,17 @@ def compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle,
         raise ValueError("pop_df est requis quand sharing_principle est fourni")
 
     is_ub = threshold_row_name in (config.THRESHOLD_UB_ABS, config.THRESHOLD_UB_PER_CAPITA)
-    is_per_capita = threshold_row_name in (config.THRESHOLD_LB_PER_CAPITA, config.THRESHOLD_UB_PER_CAPITA)
+    is_lower = threshold_row_name in (config.THRESHOLD_LOWER_ABS, config.THRESHOLD_LOWER_PER_CAPITA)
+    is_per_capita = threshold_row_name in (
+        config.THRESHOLD_LOWER_PER_CAPITA, config.THRESHOLD_LB_PER_CAPITA, config.THRESHOLD_UB_PER_CAPITA,
+    )
 
-    world_budget_row = config.WORLD_BUDGET_ROW_UB if is_ub else config.WORLD_BUDGET_ROW_LB
+    if is_ub:
+        world_budget_row = config.WORLD_BUDGET_ROW_UB
+    elif is_lower:
+        world_budget_row = config.WORLD_BUDGET_ROW_LOWER
+    else:
+        world_budget_row = config.WORLD_BUDGET_ROW_LB
     world_conversion_row = config.WORLD_CONVERSION_ROW_PER_CAPITA if is_per_capita else config.WORLD_CONVERSION_ROW_ABS
 
     world_budget = lookup_seuil(seuils_df, world_budget_row, subprocess_name, require_positive=True)
@@ -197,8 +207,8 @@ def compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle,
 
 
 def lookup_threshold(seuils_df, threshold_row_name, subprocess_name, pop_df=None, sharing_principle=None):
-    """Point d'entrée unique pour un seuil LB/UB dans les figures : lecture statique
-    (comportement historique, lookup_seuil avec require_positive=True) si
+    """Point d'entrée unique pour un seuil LOWER/LB/UB dans les figures : lecture
+    statique (comportement historique, lookup_seuil avec require_positive=True) si
     sharing_principle est None, sinon recalcul dynamique via compute_sharing_seuil."""
     if sharing_principle is None:
         return lookup_seuil(seuils_df, threshold_row_name, subprocess_name, require_positive=True)

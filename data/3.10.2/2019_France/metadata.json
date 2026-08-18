@@ -10,10 +10,10 @@
         "user": "Arnaud"
     },
     "run": {
-        "data_utc": "2026-07-20",
-        "time_utc": "15:13:19",
+        "data_utc": "2026-08-18",
+        "time_utc": "16:05:55",
         "datetime_utc": [
-            "2026-07-20T15:13:19+00:00"
+            "2026-08-18T16:05:55+00:00"
         ]
     },
     "workflow": {
@@ -29,7 +29,7 @@
             "export_format": [
                 "pickle"
             ],
-            "clean_path_out": null,
+            "clean_path_out": true,
             "system_calcul_strategy": "exo_invest_matrix",
             "shall_calculate_mapping": false,
             "extension_names": [

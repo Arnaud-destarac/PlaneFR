@@ -1,0 +1,7 @@
+{
+  "base_year": 2015,
+  "proj_year": "2050",
+  "scenario_name": "S2",
+  "extension_name": "dom_biogeochemical",
+  "strategy": "gross_output_based"
+}
