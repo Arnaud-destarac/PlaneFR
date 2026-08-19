@@ -10,10 +10,10 @@
         "user": "Arnaud"
     },
     "run": {
-        "data_utc": "2026-08-18",
-        "time_utc": "16:08:09",
+        "data_utc": "2026-08-19",
+        "time_utc": "17:06:33",
         "datetime_utc": [
-            "2026-08-18T16:08:09+00:00"
+            "2026-08-19T17:06:33+00:00"
         ]
     },
     "workflow": {
@@ -40,12 +40,14 @@
                 "dom_biogeochemical",
                 "dom_raw_materials",
                 "dom_water",
+                "dom_air_emissions",
                 "imp_ghg_emissions",
                 "imp_energy",
                 "imp_land_use",
                 "imp_biogeochemical",
                 "imp_raw_materials",
-                "imp_water"
+                "imp_water",
+                "imp_air_emissions"
             ]
         }
     }

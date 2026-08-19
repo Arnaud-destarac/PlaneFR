@@ -328,6 +328,63 @@ def process_scenario(scenario_folder_path, facteurs_carac_df, bridge_matrices_df
     return data_by_subprocess, subprocess_to_lp
 
 
+def process_subprocess_lp_breakdown(subprocess_name, scenario_folder_path, facteurs_carac_df, seuils_df):
+    """Empreinte absolue (dom + imp + F_Y) d'un sous-processus pour un scénario,
+    décomposée par LP (processus du système Terre) d'origine -- contrairement à
+    process_single_subprocess_scenario/process_scenario, qui répartissent par
+    catégorie de consommation en sommant tous les LP ensemble, cette fonction
+    garde chaque LP séparé et ne répartit pas par catégorie.
+
+    Utilisé par plot_process_breakdown pour visualiser la part de chaque LP
+    dans l'empreinte d'un sous-processus donné (ex. Biodiversity loss).
+    Même logique de chargement dom/imp/World-Europe que process_scenario_per_capita.
+
+    Returns:
+        {lp_name: valeur_absolue} -- seulement les LP pour lesquels des données
+        existent pour ce scénario (dict potentiellement vide, jamais de LP
+        manquant explicitement mis à 0).
+    """
+    subprocess_to_lp = get_unique_subprocesses(facteurs_carac_df)
+    lp_list = subprocess_to_lp.get(subprocess_name, [])
+
+    is_world_europe = "World" in scenario_folder_path.name or "Europe" in scenario_folder_path.name
+    conversion_factor = lookup_seuil(seuils_df, config.CONVERSION_ROW_ABS, subprocess_name)
+
+    lp_values = {}
+    for lp_name in lp_list:
+        if is_world_europe and lp_name == "ghg_combustion":
+            continue
+
+        ext_map = build_extension_factor_map(facteurs_carac_df, subprocess_name, lp_name)
+        total = 0.0
+        has_data = False
+
+        if is_world_europe:
+            d_cba = io.load_d_cba_world_europe(scenario_folder_path, lp_name)
+            if d_cba is not None:
+                total += filter_and_weight_scalar(d_cba, ext_map)
+                has_data = True
+            f_y_tot = io.load_f_y_tot_world_europe(scenario_folder_path, lp_name)
+            if f_y_tot is not None:
+                total += filter_and_weight_scalar(f_y_tot, ext_map)
+                has_data = True
+        else:
+            for origin in ("dom", "imp"):
+                d_cba = io.load_d_cba_france(scenario_folder_path, lp_name, origin)
+                if d_cba is not None:
+                    total += filter_and_weight_scalar(d_cba, ext_map)
+                    has_data = True
+            f_y_tot = io.load_f_y_tot_france(scenario_folder_path, lp_name)
+            if f_y_tot is not None:
+                total += filter_and_weight_scalar(f_y_tot, ext_map)
+                has_data = True
+
+        if has_data:
+            lp_values[lp_name] = total / conversion_factor if conversion_factor else total
+
+    return lp_values
+
+
 # ============================================================================
 # EMPREINTE PAR HABITANT, CBA + PBA (Figure comparaison)
 # ============================================================================

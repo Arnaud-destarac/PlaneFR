@@ -215,7 +215,7 @@ def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
     ub_color="#bc270a", x_main_max=8.0, display_bounds=True,
-    show_pba=False, show_value_labels=True,
+    show_pba=False, show_value_labels=True, show_value_bounds=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
@@ -248,6 +248,12 @@ def create_overshoot_safe_space_figure(
             une seconde bulle hachurée (production-based accounting).
         show_value_labels: si True, affiche la valeur absolue à côté de chaque
             bulle (uniquement utilisé par la figure en valeurs absolues).
+        show_value_bounds: si True (défaut), affiche la valeur absolue
+            au-dessus de tous les traits (Lower Safe Bound, Safe Limit, Upper
+            Safe Bound). Si False, masque uniquement les valeurs de Lower Safe
+            Bound et Upper Safe Bound (la valeur au-dessus de Safe Limit reste
+            affichée). Sans effet sur les traits eux-mêmes (voir
+            display_bounds).
         title_above_bar: si False (défaut), nom du LP + unité affichés dans la
             marge de gauche, comme avant. Si True, affichés au-dessus de la
             barre, alignés à gauche sur son début (x=0), unité systématiquement
@@ -390,15 +396,17 @@ def create_overshoot_safe_space_figure(
         # Bound (vert clair/rouge) uniquement si display_bounds=True.
         if display_bounds and lower_rel is not None and lower_rel >= 0:
             ax.axvline(lower_rel, ymin=0.10, ymax=0.90, color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3, zorder=3)
-            ax.text(lower_rel, 0.93, _fmt_abs(lower_val), color=config.LOWER_SAFE_BOUND_COLOR, fontsize=11,
-                    fontweight="bold", ha="center", va="bottom", zorder=5)
+            if show_value_bounds:
+                ax.text(lower_rel, 0.93, _fmt_abs(lower_val), color=config.LOWER_SAFE_BOUND_COLOR, fontsize=11,
+                        fontweight="bold", ha="center", va="bottom", zorder=5)
         ax.axvline(1, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
         ax.text(1, 0.93, _fmt_abs(lb_val), color="#0d9a33", fontsize=11, fontweight="bold",
                 ha="center", va="bottom", zorder=5)
         if display_bounds and ub_rel is not None and ub_rel <= x_main_max:
             ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
-            ax.text(ub_rel, 0.93, _fmt_abs(ub_val), color=ub_color, fontsize=11, fontweight="bold",
-                    ha="center", va="bottom", zorder=5)
+            if show_value_bounds:
+                ax.text(ub_rel, 0.93, _fmt_abs(ub_val), color=ub_color, fontsize=11, fontweight="bold",
+                        ha="center", va="bottom", zorder=5)
 
         # Bulles CBA (pleines) + PBA (hachurées, si show_pba)
         for p in points:
