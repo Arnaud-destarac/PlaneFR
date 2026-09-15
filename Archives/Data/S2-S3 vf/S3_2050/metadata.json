@@ -10,10 +10,10 @@
         "user": "Arnaud"
     },
     "run": {
-        "data_utc": "2026-07-20",
-        "time_utc": "15:17:07",
+        "data_utc": "2026-09-15",
+        "time_utc": "21:10:43",
         "datetime_utc": [
-            "2026-07-20T15:17:07+00:00"
+            "2026-09-15T21:10:43+00:00"
         ]
     },
     "workflow": {
@@ -22,14 +22,14 @@
         "identity": {
             "path_in": {
                 "accounts": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\4-PlaneFR\\Outputs\\France\\Base_year_2015",
-                "shock": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\3-workshops\\2-shocks\\1-transitions_2050\\S3_2050",
+                "shock": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\4-PlaneFR\\2-shocks\\1-transitions_2050\\S3_2050",
                 "bridges": null
             },
             "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.10.2\\S3_2050",
             "export_format": [
                 "pickle"
             ],
-            "clean_path_out": null,
+            "clean_path_out": true,
             "system_calcul_strategy": "exo_invest_matrix",
             "shall_calculate_mapping": false,
             "extension_names": [
@@ -40,12 +40,14 @@
                 "dom_biogeochemical",
                 "dom_raw_materials",
                 "dom_water",
+                "dom_air_emissions",
                 "imp_ghg_emissions",
                 "imp_energy",
                 "imp_land_use",
                 "imp_biogeochemical",
                 "imp_raw_materials",
-                "imp_water"
+                "imp_water",
+                "imp_air_emissions"
             ]
         }
     }
