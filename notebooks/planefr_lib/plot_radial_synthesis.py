@@ -60,7 +60,8 @@ LP_COLORS = {
     "Blue water consumption":    "#096DB4",  
     "Cropland use":               "#3B5A17", 
     "GHG emissions":              "#F57C00",
-    "Biodiversity loss":          "#B12BB1", 
+    "Biodiversity loss - PDF":          "#B12BB1",
+    "Biodiversity loss - HANPP":          "#FC85FC", 
     "Raw material consumption":   "#757575", 
 }
 _FALLBACK_LP_COLOR = "#4c78a8"

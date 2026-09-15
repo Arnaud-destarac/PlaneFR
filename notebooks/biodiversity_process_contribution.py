@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 from planefr_lib import config, io, processing
 from planefr_lib.plot_process_breakdown import create_subprocess_contribution_chart
 
-SUBPROCESS_NAME = "Biodiversity loss"
+SUBPROCESS_NAME = "Biodiversity loss - PDF"
 
 
 def main():
