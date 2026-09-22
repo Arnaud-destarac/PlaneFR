@@ -1,8 +1,18 @@
 """
 Traitement des données chargées par io.py : filtrage/pondération par facteur de
 caractérisation, agrégation par sous-processus, calcul des empreintes en valeurs
-absolues (process_scenario) et par habitant CBA/PBA (process_scenario_per_capita).
+absolues (process_scenario, réparties par catégorie de consommation, et
+process_scenario_absolute, total seul) et par habitant CBA/PBA
+(process_scenario_per_capita).
+
+Contient aussi les deux façons de descendre du budget mondial au budget d'un
+pays : partage égal per capita (compute_sharing_seuil, à partir de la feuille
+"Population" de seuils.xlsx) ou parts régionales EPC/CTR (compute_region_budget,
+à partir de budget_shares.xlsx).
 """
+
+import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -216,6 +226,119 @@ def lookup_threshold(seuils_df, threshold_row_name, subprocess_name, pop_df=None
 
 
 # ============================================================================
+# BUDGETS PAR RÉGION À PARTIR DE PARTS (budget_shares.xlsx)
+# ============================================================================
+# Deuxième façon de descendre du budget mondial au budget d'un pays/région, en
+# alternative au partage égal per capita de compute_sharing_seuil : au lieu d'un
+# ratio de populations, on multiplie le budget mondial par une part lue dans
+# budget_shares.xlsx (principes "EPC" = equal per capita, "CTR" = capability to
+# reduce, chacun avec une part de référence et un encadrement min/max sur les
+# variantes SSP). Les budgets obtenus sont en valeurs absolues ("Figures unit"),
+# jamais par habitant.
+
+# threshold_kind -> ligne de seuils.xlsx/"Synthèse" donnant le budget mondial.
+_WORLD_BUDGET_ROW_FOR_KIND = {
+    "lower": config.WORLD_BUDGET_ROW_LOWER,
+    "lb": config.WORLD_BUDGET_ROW_LB,
+    "ub": config.WORLD_BUDGET_ROW_UB,
+}
+
+
+def resolve_region_code(scenario_name, shares_df, default=config.DEFAULT_REGION_CODE):
+    """Code région EXIOBASE (index de shares_df) correspondant à un nom de scénario.
+
+    Le nom de dossier est découpé sur tout ce qui n'est pas alphanumérique et
+    chaque morceau est comparé aux codes disponibles, en ignorant la casse :
+    "2019_EU27" -> "EU27", "2019_FR" -> "FR", "2019_W" -> "W". La comparaison
+    porte sur des morceaux entiers et non sur une inclusion de texte, pour ne pas
+    faire correspondre "TREND" à "TR" (Turquie) ni "Tech_NZE" à "CH" (Suisse).
+
+    Les scénarios dont le nom ne contient aucun code (Base_year, TREND,
+    Tech_NZE, Sufficiency_NZE...) sont des scénarios France : ils reçoivent
+    `default` (config.DEFAULT_REGION_CODE, soit "FR").
+    """
+    codes = {str(code).upper(): code for code in shares_df.index}
+    for token in re.split(r"[^A-Za-z0-9]+", str(scenario_name)):
+        if token and token.upper() in codes:
+            return codes[token.upper()]
+    return default
+
+
+def find_share_column(shares_df, sharing_principle, variant):
+    """Colonne de parts correspondant à (principe de partage, variante), ou None.
+
+    Args:
+        sharing_principle: "EPC" ou "CTR".
+        variant: "ref" (part de référence, qui positionne les bulles), "min" ou
+            "max" (bornes de l'intervalle de sensibilité).
+
+    Le nom exact des colonnes de référence contient des précisions qui peuvent
+    évoluer (SSP retenu, période) : on les retrouve donc par motif
+    (config.BUDGET_SHARE_COLUMN_PATTERNS) plutôt que par nom exact.
+    """
+    if sharing_principle not in config.BUDGET_SHARE_COLUMN_PATTERNS:
+        raise ValueError(
+            f"sharing_principle inconnu : {sharing_principle!r} "
+            f"(attendu : {', '.join(config.BUDGET_SHARE_COLUMN_PATTERNS)})"
+        )
+    pattern = config.BUDGET_SHARE_COLUMN_PATTERNS[sharing_principle][variant]
+    for column in shares_df.columns:
+        if re.search(pattern, str(column), flags=re.IGNORECASE):
+            return column
+    return None
+
+
+def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref"):
+    """Part du budget mondial revenant à `region_code`, en float, ou None si elle
+    est absente/non calculable (colonne introuvable, code région inconnu, "n.d."
+    ou cellule vide — cf. io.load_budget_shares_df)."""
+    column = find_share_column(shares_df, sharing_principle, variant)
+    if column is None or region_code not in shares_df.index:
+        return None
+    value = shares_df.loc[region_code, column]
+    if isinstance(value, pd.Series):  # code région dupliqué dans la feuille
+        value = value.iloc[0]
+    if pd.isna(value):
+        return None
+    value = float(value)
+    return value if value > 0 else None
+
+
+def compute_region_budget(seuils_df, shares_df, subprocess_name, region_code,
+                          sharing_principle, variant="ref", threshold_kind="lb"):
+    """Budget LOWER/LB/UB d'un pays/région, en valeurs absolues, obtenu en
+    appliquant au budget mondial la part de `region_code` lue dans shares_df.
+
+    Formule :
+        budget_région = Budget_mondial(LOWER, LB ou UB) / Conversion_budget * Part_région
+
+    où Budget_mondial et Conversion_budget sont exactement ceux de
+    compute_sharing_seuil (lignes "Lower safe bound"/"Safe limit"/"Upper safe
+    bound" et "Unit conversion budget" de seuils.xlsx/"Synthèse") : seule la
+    descente du mondial au national change, la conversion d'unité est inchangée.
+
+    Args:
+        threshold_kind: "lower", "lb" ou "ub".
+        variant: "ref", "min" ou "max" (voir find_share_column).
+
+    Returns:
+        float, ou None si une donnée nécessaire est absente (budget mondial non
+        renseigné pour ce sous-processus, conversion manquante, part inconnue).
+    """
+    if threshold_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
+        raise ValueError(f"threshold_kind inconnu : {threshold_kind!r}")
+
+    world_budget = lookup_seuil(seuils_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
+                                subprocess_name, require_positive=True)
+    world_conversion = lookup_seuil(seuils_df, config.WORLD_CONVERSION_ROW_ABS, subprocess_name)
+    share = lookup_budget_share(shares_df, region_code, sharing_principle, variant)
+    if world_budget is None or not world_conversion or share is None:
+        return None
+
+    return world_budget / world_conversion * share
+
+
+# ============================================================================
 # EMPREINTE EN VALEURS ABSOLUES (Synthèse multi-scénarios, Overshoot multi-scénarios)
 # ============================================================================
 
@@ -347,7 +470,7 @@ def process_subprocess_lp_breakdown(subprocess_name, scenario_folder_path, facte
     subprocess_to_lp = get_unique_subprocesses(facteurs_carac_df)
     lp_list = subprocess_to_lp.get(subprocess_name, [])
 
-    is_world_europe = "World" in scenario_folder_path.name or "Europe" in scenario_folder_path.name
+    is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
     conversion_factor = lookup_seuil(seuils_df, config.CONVERSION_ROW_ABS, subprocess_name)
 
     lp_values = {}
@@ -386,45 +509,41 @@ def process_subprocess_lp_breakdown(subprocess_name, scenario_folder_path, facte
 
 
 # ============================================================================
-# EMPREINTE PAR HABITANT, CBA + PBA (Figure comparaison)
+# EMPREINTE TOTALE CBA + PBA D'UN SCÉNARIO (par habitant ou en valeurs absolues)
 # ============================================================================
 
 
-def get_population(scenario_path, pop_df):
-    """Population en PERSONNES pour un scénario (pop_df stocke des milliers
-    d'habitants). Année déduite du nom du dossier (2019/2015/sinon 2050),
-    géographie déduite de "World"/"Europe"/sinon France."""
-    path_str = str(scenario_path)
-    year = 2019 if "2019" in path_str else (2015 if "2015" in path_str else 2050)
-    if "World" in path_str:
-        col = "Monde"
-    elif "Europe" in path_str:
-        col = "Europe"
-    else:
-        col = "France"
-    return float(pop_df.loc[year, col]) * 1000
+def scenario_has_dom_imp_split(scenario_folder_path):
+    """True si les extensions du scénario sont séparées en dom_{lp}/imp_{lp}
+    (scénarios France), False si elles sont déjà agrégées en un seul dossier par
+    LP (scénarios Monde/Europe, cf. reformat_d_cba_monde_europe.py).
+
+    Détection sur la structure du dossier et non sur son nom : les noms de
+    dossiers de scénarios changent (2019_World -> 2019_W, 2019_Europe_27 ->
+    2019_EU27...), pas leur arborescence.
+    """
+    extensions_dir = Path(scenario_folder_path) / "extensions"
+    if not extensions_dir.is_dir():
+        return False
+    return any(d.is_dir() and d.name.startswith(("dom_", "imp_")) for d in extensions_dir.iterdir())
 
 
-def process_scenario_per_capita(scenario_folder_path, facteurs_carac_df, seuils_df, pop_df):
-    """Empreinte par habitant CBA (consumption-based, d_cba) et PBA
-    (production-based, F_x_dom) pour tous les sous-processus d'un scénario.
+def _scenario_footprint_totals(scenario_folder_path, facteurs_carac_df, is_world_europe):
+    """Totaux d'empreinte CBA et PBA par sous-processus, en unités Exiobase brutes
+    (ni converties ni divisées par la population) — socle commun de
+    process_scenario_per_capita et process_scenario_absolute.
 
-    Formule : empreinte_par_hab = total_exiobase / Conversion(p.hab) / population.
-    CBA additionne dom + imp (France) ou lit le fichier unique (World/Europe).
-    PBA n'utilise que la part domestique. F_Y_tot.pkl, si présent pour un LP,
-    est ajouté aux deux totaux. ghg_combustion est ignoré pour World/Europe
-    (absent de ces données).
+    CBA additionne dom + imp (France) ou lit le fichier unique (Monde/Europe) ;
+    PBA n'utilise que la part domestique. F_Y_tot.pkl, si présent pour un LP, est
+    ajouté aux deux totaux. ghg_combustion est ignoré pour Monde/Europe (absent
+    de ces données).
 
     Returns:
-        {sous-processus: {"domestique": Series([cba_par_hab], index=["total"]),
-                           "importé": Series([0.0], index=["total"]),
-                           "pba": pba_par_hab (float), "categories": ["total"]}}
+        {sous-processus: (total_cba, total_pba)} — uniquement les sous-processus
+        pour lesquels au moins un fichier existe.
     """
-    is_world_europe = "World" in scenario_folder_path.name or "Europe" in scenario_folder_path.name
-    population = get_population(scenario_folder_path, pop_df)
-
     subprocess_to_lp = get_unique_subprocesses(facteurs_carac_df)
-    data_by_subprocess = {}
+    totals = {}
 
     for subprocess_name, lp_list in subprocess_to_lp.items():
         total_cba = 0.0
@@ -467,9 +586,101 @@ def process_scenario_per_capita(scenario_folder_path, facteurs_carac_df, seuils_
                     total_pba += f_y_tot_total
                     has_data = True
 
-        if not has_data:
-            continue
+        if has_data:
+            totals[subprocess_name] = (total_cba, total_pba)
 
+    return totals
+
+
+def _pack_totals(cba, pba):
+    """Met un couple (CBA, PBA) au format de payload attendu par les figures
+    overshoot (_total_footprint somme "domestique" + "importé")."""
+    return {
+        "domestique": pd.Series([cba], index=["total"]),
+        "importé": pd.Series([0.0], index=["total"]),
+        "pba": pba,
+        "categories": ["total"],
+    }
+
+
+def process_scenario_absolute(scenario_folder_path, facteurs_carac_df, seuils_df):
+    """Empreinte totale CBA et PBA d'un scénario, en valeurs absolues (unité
+    "Figures unit" de seuils.xlsx), pour tous les sous-processus.
+
+    Formule : empreinte = total_exiobase / Conversion ("Unit conversion Exiobase").
+    C'est process_scenario_per_capita sans la division par la population, et avec
+    la ligne de conversion en valeurs absolues au lieu de sa variante (p.cap) —
+    destinée à plot_overshoot.create_overshoot_safe_space_figure_by_region, où
+    l'empreinte d'un pays est comparée à sa part du budget mondial et non à un
+    budget par habitant.
+
+    Contrairement à process_scenario (valeurs absolues elle aussi, mais réservée
+    aux scénarios France car elle répartit l'empreinte par catégorie de
+    consommation via la matrice bridge), cette fonction ne renvoie qu'un total
+    par sous-processus et accepte aussi les scénarios Monde/Europe.
+
+    Returns:
+        {sous-processus: {"domestique": Series([cba], index=["total"]),
+                           "importé": Series([0.0], index=["total"]),
+                           "pba": pba (float), "categories": ["total"]}}
+    """
+    is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
+    totals = _scenario_footprint_totals(scenario_folder_path, facteurs_carac_df, is_world_europe)
+
+    data_by_subprocess = {}
+    for subprocess_name, (total_cba, total_pba) in totals.items():
+        conversion = lookup_seuil(seuils_df, config.CONVERSION_ROW_ABS, subprocess_name)
+        if conversion is not None:
+            total_cba, total_pba = total_cba / conversion, total_pba / conversion
+        data_by_subprocess[subprocess_name] = _pack_totals(total_cba, total_pba)
+
+    return data_by_subprocess
+
+
+# Code région (cf. resolve_region_code) -> colonne de la feuille "Population"
+# de seuils.xlsx. Indépendant de budget_shares.xlsx : get_population n'a besoin
+# que du nom de dossier, pas d'une feuille de parts.
+_POPULATION_COLUMN_FOR_REGION_CODE = {"W": "Monde", "EU27": "Europe"}
+
+
+def get_population(scenario_path, pop_df):
+    """Population en PERSONNES pour un scénario (pop_df stocke des milliers
+    d'habitants). Année déduite du nom du dossier (2019/2015/sinon 2050),
+    géographie déduite du code région contenu dans le nom (comparaison sur des
+    morceaux entiers du nom, comme resolve_region_code, et non par inclusion de
+    texte -- "W" -> Monde, "EU27" -> Europe, sinon France)."""
+    path_str = str(scenario_path)
+    year = 2019 if "2019" in path_str else (2015 if "2015" in path_str else 2050)
+    tokens = {t.upper() for t in re.split(r"[^A-Za-z0-9]+", Path(scenario_path).name) if t}
+    col = "France"
+    for code, column in _POPULATION_COLUMN_FOR_REGION_CODE.items():
+        if code in tokens:
+            col = column
+            break
+    return float(pop_df.loc[year, col]) * 1000
+
+
+def process_scenario_per_capita(scenario_folder_path, facteurs_carac_df, seuils_df, pop_df):
+    """Empreinte par habitant CBA (consumption-based, d_cba) et PBA
+    (production-based, F_x_dom) pour tous les sous-processus d'un scénario.
+
+    Formule : empreinte_par_hab = total_exiobase / Conversion(p.hab) / population.
+    CBA additionne dom + imp (France) ou lit le fichier unique (World/Europe).
+    PBA n'utilise que la part domestique. F_Y_tot.pkl, si présent pour un LP,
+    est ajouté aux deux totaux. ghg_combustion est ignoré pour World/Europe
+    (absent de ces données).
+
+    Returns:
+        {sous-processus: {"domestique": Series([cba_par_hab], index=["total"]),
+                           "importé": Series([0.0], index=["total"]),
+                           "pba": pba_par_hab (float), "categories": ["total"]}}
+    """
+    is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
+    population = get_population(scenario_folder_path, pop_df)
+    totals = _scenario_footprint_totals(scenario_folder_path, facteurs_carac_df, is_world_europe)
+
+    data_by_subprocess = {}
+    for subprocess_name, (total_cba, total_pba) in totals.items():
         conversion = lookup_seuil(seuils_df, config.CONVERSION_ROW_PER_CAPITA, subprocess_name)
         if conversion is not None:
             per_capita_cba = total_cba / conversion / population
@@ -478,11 +689,6 @@ def process_scenario_per_capita(scenario_folder_path, facteurs_carac_df, seuils_
             per_capita_cba = total_cba / population
             per_capita_pba = total_pba / population
 
-        data_by_subprocess[subprocess_name] = {
-            "domestique": pd.Series([per_capita_cba], index=["total"]),
-            "importé": pd.Series([0.0], index=["total"]),
-            "pba": per_capita_pba,
-            "categories": ["total"],
-        }
+        data_by_subprocess[subprocess_name] = _pack_totals(per_capita_cba, per_capita_pba)
 
     return data_by_subprocess
