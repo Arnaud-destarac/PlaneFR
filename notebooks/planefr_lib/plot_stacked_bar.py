@@ -74,7 +74,7 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
     if not any(data is not None for data in data_by_subprocess.values()):
         print("Aucune donnée valide à visualiser")
-        return None if ax is None else (None, ax)
+        return (None, None) if ax is None else (None, ax)
 
     all_categories = set()
     for data in data_by_subprocess.values():
