@@ -69,6 +69,28 @@ def load_population_df():
     return pd.read_excel(config.SEUILS_FILE, sheet_name="Population", index_col=0)
 
 
+def load_budget_shares_df():
+    """Feuille 'Parts_regions_EXIOBASE' de budget_shares.xlsx : part du budget
+    mondial revenant à chaque région EXIOBASE (+ l'agrégat UE27), indexée par
+    code région ("Code EXIOBASE" : FR, EU27, W, CN...).
+
+    Les lignes de titre/notes qui encadrent le tableau dans la feuille sont
+    écartées (en-têtes lus à config.BUDGET_SHARES_HEADER_ROW, puis on ne garde
+    que les lignes ayant à la fois un code et un nom de région — les notes de
+    bas de tableau occupent la colonne des codes mais pas celle des régions),
+    et les parts sont converties en numérique : la feuille note "n.d." les
+    parts non calculables (Taïwan, absent des données Banque mondiale) et laisse
+    vides les min/max qui n'ont pas de sens (ligne "W"), qui deviennent donc NaN."""
+    df = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=config.BUDGET_SHARES_SHEET,
+                       header=config.BUDGET_SHARES_HEADER_ROW)
+    df = df[df[config.BUDGET_SHARE_CODE_COLUMN].notna() & df["Région"].notna()]
+    df = df.set_index(config.BUDGET_SHARE_CODE_COLUMN)
+    df.index = df.index.map(lambda x: str(x).strip())
+    share_columns = [c for c in df.columns if c != "Région"]
+    df[share_columns] = df[share_columns].apply(pd.to_numeric, errors="coerce")
+    return df
+
+
 # ============================================================================
 # Y_CATEGORY
 # ============================================================================

@@ -29,6 +29,7 @@ FIGURES_DIR = Path(os.environ.get("PLANEFR_FIGURES_DIR", str(PROJECT_DIR / "figu
 FACTEURS_CARAC_FILE = DATA_DIR / "facteurs de caractérisation.xlsx"
 BRIDGE_MATRICES_FILE = DATA_DIR / "bridge_matrices.xlsx"
 SEUILS_FILE = DATA_DIR / "seuils.xlsx"
+BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
 
 # ============================================================================
 # SCÉNARIOS
@@ -123,6 +124,41 @@ WORLD_BUDGET_ROW_UB = "Upper safe bound"
 # mêmes lignes utilisées en diviseur, comme CONVERSION_ROW_ABS/CONVERSION_ROW_PER_CAPITA.
 WORLD_CONVERSION_ROW_ABS = "Unit conversion budget"
 WORLD_CONVERSION_ROW_PER_CAPITA = "Unit conversion budget (p. cap)"
+
+# ============================================================================
+# PARTS DU BUDGET MONDIAL PAR RÉGION EXIOBASE (budget_shares.xlsx)
+# ============================================================================
+# Alternative au partage égal per capita ci-dessus (SHARING_PRINCIPLE_POPULATION_ROW) :
+# le budget d'un pays/région est le budget mondial multiplié par une part lue dans
+# budget_shares.xlsx, et non plus déduit d'un ratio de populations. Utilisé par
+# plot_overshoot.create_overshoot_safe_space_figure_by_region (figure en valeurs
+# absolues, donc conversions _ABS : WORLD_CONVERSION_ROW_ABS / CONVERSION_ROW_ABS).
+
+BUDGET_SHARES_SHEET = "Parts_regions_EXIOBASE"
+
+# La feuille commence par un titre et deux lignes de notes : la vraie ligne
+# d'en-têtes ("Code EXIOBASE", "Région", "Part EPC ref. ...") est la 4e.
+BUDGET_SHARES_HEADER_ROW = 3
+
+# Colonne servant d'index (code région EXIOBASE : FR, EU27, W, CN...).
+BUDGET_SHARE_CODE_COLUMN = "Code EXIOBASE"
+
+# Principe de partage -> motifs (regex, insensibles à la casse) identifiant la
+# colonne de part à utiliser pour la référence (position des bulles) et pour les
+# deux bornes de sensibilité.
+# Les motifs "ref" sont ancrés sur "Part ..." à dessein : la feuille contient
+# aussi "Rapport CTR / EPC ref." (qui contient "EPC ref" sans être une part) et
+# "Part CTR réf. – calcul direct sur 49 régions" (accentué, variante
+# d'illustration) — ni l'une ni l'autre ne doit être sélectionnée.
+BUDGET_SHARE_COLUMN_PATTERNS = {
+    "EPC": {"ref": r"^Part\s+EPC\s+ref", "min": r"^EPC\s+min$", "max": r"^EPC\s+max$"},
+    "CTR": {"ref": r"^Part\s+CTR\s+ref", "min": r"^CTR\s+min$", "max": r"^CTR\s+max$"},
+}
+
+# Code région utilisé pour un scénario dont le nom de dossier ne contient aucun
+# code EXIOBASE (Base_year, TREND, Tech_NZE, Sufficiency_NZE... : tous des
+# scénarios France).
+DEFAULT_REGION_CODE = "FR"
 
 # ============================================================================
 # COULEURS DES CATÉGORIES DE CONSOMMATION
