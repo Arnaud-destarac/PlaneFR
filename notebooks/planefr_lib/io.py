@@ -34,14 +34,25 @@ def load_bridge_matrices():
     return pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name="Final conso. cat.")
 
 
-def load_bridge_m_matrix():
-    """Bridge 'M' (200 produits x 5 catégories) pour l'agrégation du bubble chart
-    par sous-processus. À ne pas confondre avec la feuille 'Alimentation' du même
-    classeur, qui est une ventilation fine des produits alimentaires (Riz, Bœuf,
-    Porc...) sans rapport avec les 5 catégories de consommation."""
-    m_raw = pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name="M")
-    bridge_m = m_raw.iloc[:200, 3:8].copy()
-    bridge_m.index = m_raw.iloc[:200, 2].values
+def load_bridge_m_matrix(sheet_name="M"):
+    """Bridge produits -> catégories de consommation (200 produits x k catégories)
+    pour l'agrégation par catégorie des tableaux Excel / du bubble chart.
+
+    Args:
+        sheet_name: "M" (5 catégories : Food, Housing, Mobility, Final goods,
+            Final services) ou "M_split" (ventilation plus fine, 12 catégories).
+            Toutes les colonnes après "sector" sont lues comme des catégories.
+
+    À ne pas confondre avec la feuille 'Alimentation' du même classeur, qui est
+    une ventilation fine des produits alimentaires (Riz, Bœuf, Porc...).
+
+    La 1re ligne de données de la feuille est une 2e ligne d'en-tête
+    (category / sub_category / sector) : les 200 produits sont aux lignes 1 à 200."""
+    m_raw = pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name=sheet_name)
+    # Colonnes catégories : celles après "sector", hors colonnes vides sans en-tête.
+    category_cols = [c for c in m_raw.columns[3:] if not str(c).startswith("Unnamed")]
+    bridge_m = m_raw.loc[m_raw.index[1:201], category_cols].copy()
+    bridge_m.index = m_raw.iloc[1:201, 2].values
     bridge_m = bridge_m.apply(pd.to_numeric, errors="coerce").fillna(0)
     return (bridge_m > 0).astype(int)
 
@@ -200,18 +211,28 @@ def load_m_matrix(scenario_folder_path, lp_name, kind):
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
-def get_y_blocks(scenario_folder_path):
+def get_y_blocks(scenario_folder_path, excluded_y_categories=None):
     """Charge system/Y.pkl pour un scénario et retourne (y_dom_5, y_imp_5) : deux
     DataFrames 200 x 5 (5 colonnes identiques, dupliquées pour compatibilité avec
     le pipeline de pondération par catégorie) utilisés pour dimensionner/pondérer
     le bubble chart.
+
+    Args:
+        excluded_y_categories: None (défaut, comportement historique du bubble
+            chart) -> somme des 6 colonnes de Y.pkl ; sinon, somme des colonnes
+            dont le Y_category (2e niveau) n'est pas dans cette liste — ex.
+            ("GFCF", "Exports") pour la demande finale cohérente avec M_k.
     """
     y_path = Path(scenario_folder_path) / "system" / "Y.pkl"
     if not y_path.exists():
         raise FileNotFoundError(f"Y.pkl introuvable : {y_path}")
 
     y_df = pd.read_pickle(y_path)
-    y_sum_0_6 = y_df.iloc[:, 0:6].sum(axis=1)
+    if excluded_y_categories is None:
+        y_sum_0_6 = y_df.iloc[:, 0:6].sum(axis=1)
+    else:
+        keep = ~y_df.columns.get_level_values(1).isin(excluded_y_categories)
+        y_sum_0_6 = y_df.loc[:, keep].sum(axis=1)
 
     y_5cols = pd.concat([y_sum_0_6] * 5, axis=1)
     y_5cols.columns = [f"Y_sum_0_6_{i + 1}" for i in range(5)]
