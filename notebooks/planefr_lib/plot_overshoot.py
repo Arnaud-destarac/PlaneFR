@@ -737,6 +737,7 @@ def create_overshoot_safe_space_figure_by_region(
     title="Overshoot relative to the Safe Operating Space",
     sharing_principle="EPC", sensitivity=False,
     region_codes=None, default_region_code=config.DEFAULT_REGION_CODE,
+    pop_df=None,
 ):
     """Même type de figure que create_overshoot_safe_space_figure, en valeurs
     absolues et avec un budget propre à chaque pays/région.
@@ -789,6 +790,14 @@ def create_overshoot_safe_space_figure_by_region(
             budget plus petit, donc un overshoot plus grand, c'est elle qui
             fixe l'extrémité DROITE du segment (et la part max l'extrémité
             gauche).
+            W (part 1, sans min/max) : si pop_df est fourni, le segment est
+            obtenu par habitant -- limite mondiale divisée par la population
+            Monde de chaque période de config.SHARING_PRINCIPLE_POPULATION_ROW
+            (2019, moyenne 2019-2050, moyenne 2019-2100), comparée aux
+            pressions mondiales par habitant (population 2019). La bulle de
+            référence est inchangée (voir processing.compute_world_period_budget).
+        pop_df: feuille "Population" (io.load_population_df), requise seulement
+            pour la sensibilité de W.
         region_codes: optionnel, {nom_scénario: code EXIOBASE} pour forcer le
             rattachement d'un scénario à une ligne de shares_df, au lieu de le
             déduire de son nom.
@@ -823,10 +832,23 @@ def create_overshoot_safe_space_figure_by_region(
     }
 
     def budget_of(subprocess_name, scenario_name, threshold_kind="lb", variant="ref"):
-        return processing.compute_region_budget(
+        budget = processing.compute_region_budget(
             seuils_df, shares_df, subprocess_name, codes[scenario_name],
             sharing_principle, variant=variant, threshold_kind=threshold_kind,
         )
+        # W n'a pas de parts min/max : sensibilité par habitant, en faisant
+        # varier la période de population de la limite (cf. pop_df).
+        if (budget is None and variant != "ref" and pop_df is not None
+                and str(codes[scenario_name]).upper() == config.WORLD_REGION_CODE):
+            period_budgets = [
+                processing.compute_world_period_budget(seuils_df, pop_df, subprocess_name, row,
+                                                       threshold_kind=threshold_kind)
+                for row in config.SHARING_PRINCIPLE_POPULATION_ROW.values()
+            ]
+            period_budgets = [b for b in period_budgets if b]
+            if period_budgets:
+                return min(period_budgets) if variant == "min" else max(period_budgets)
+        return budget
 
     subprocesses = _union_subprocesses(all_scenarios_data)
     if not subprocesses:

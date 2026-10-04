@@ -338,6 +338,40 @@ def compute_region_budget(seuils_df, shares_df, subprocess_name, region_code,
     return world_budget / world_conversion * share
 
 
+def compute_world_period_budget(seuils_df, pop_df, subprocess_name, population_row,
+                                threshold_kind="lb",
+                                pressure_population_row=config.WORLD_PRESSURE_POPULATION_ROW):
+    """Budget mondial LOWER/LB/UB "équivalent" (valeurs absolues) quand la limite
+    est raisonnée par habitant sur une période de population donnée.
+
+    Sert à la sensibilité de W, dont la part vaut 1 sans encadrement min/max dans
+    budget_shares.xlsx. La limite par habitant (Budget / Pop_Monde(période)) est
+    comparée aux pressions mondiales par habitant (Pressions / Pop_Monde(2019)) :
+
+        overshoot_pc = (Pressions / Pop_2019) / (Budget / Pop_période)
+                     = Pressions / (Budget * Pop_2019 / Pop_période)
+
+    d'où le budget équivalent renvoyé, Budget * Pop_2019 / Pop_période. Pour
+    population_row = 2019 on retrouve exactement compute_region_budget (part 1) :
+    la bulle W de référence (EPC ref., population 2019) ne bouge pas.
+
+    Returns:
+        float, ou None si une donnée nécessaire est absente.
+    """
+    if threshold_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
+        raise ValueError(f"threshold_kind inconnu : {threshold_kind!r}")
+
+    world_budget = lookup_seuil(seuils_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
+                                subprocess_name, require_positive=True)
+    world_conversion = lookup_seuil(seuils_df, config.WORLD_CONVERSION_ROW_ABS, subprocess_name)
+    if world_budget is None or not world_conversion:
+        return None
+
+    pressure_population = lookup_population(pop_df, pressure_population_row, "Monde")
+    period_population = lookup_population(pop_df, population_row, "Monde")
+    return world_budget / world_conversion * pressure_population / period_population
+
+
 # ============================================================================
 # EMPREINTE EN VALEURS ABSOLUES (Synthèse multi-scénarios, Overshoot multi-scénarios)
 # ============================================================================

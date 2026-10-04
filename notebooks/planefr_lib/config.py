@@ -155,6 +155,16 @@ BUDGET_SHARE_COLUMN_PATTERNS = {
     "CTR": {"ref": r"^Part\s+CTR\s+ref", "min": r"^CTR\s+min$", "max": r"^CTR\s+max$"},
 }
 
+# Code région du Monde dans budget_shares.xlsx. Sa part vaut 1 sans encadrement
+# min/max : sa sensibilité est calculée par habitant, en faisant varier la période
+# de population (SHARING_PRINCIPLE_POPULATION_ROW) -- voir
+# processing.compute_world_period_budget.
+WORLD_REGION_CODE = "W"
+
+# Année de population des pressions mondiales (dossier 2019_W) : la limite par
+# habitant d'une période donnée leur est comparée en la ramenant à cette population.
+WORLD_PRESSURE_POPULATION_ROW = 2019
+
 # Code région utilisé pour un scénario dont le nom de dossier ne contient aucun
 # code EXIOBASE (Base_year, TREND, Tech_NZE, Sufficiency_NZE... : tous des
 # scénarios France).
