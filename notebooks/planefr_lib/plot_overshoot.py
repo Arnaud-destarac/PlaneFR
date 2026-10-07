@@ -737,7 +737,7 @@ def create_overshoot_safe_space_figure_by_region(
     title="Overshoot relative to the Safe Operating Space",
     sharing_principle="EPC", sensitivity=False,
     region_codes=None, default_region_code=config.DEFAULT_REGION_CODE,
-    pop_df=None,
+    pop_df=None, scale_UB=False,
 ):
     """Même type de figure que create_overshoot_safe_space_figure, en valeurs
     absolues et avec un budget propre à chaque pays/région.
@@ -798,6 +798,23 @@ def create_overshoot_safe_space_figure_by_region(
             référence est inchangée (voir processing.compute_world_period_budget).
         pop_df: feuille "Population" (io.load_population_df), requise seulement
             pour la sensibilité de W.
+        scale_UB: si False (défaut), échelle commune à toutes les lignes, en
+            multiples de la limite basse (1L, 2L, 3L...). Si True, l'échelle de
+            chaque ligne est propre à son sous-processus, linéaire par
+            morceaux : inchangée entre 0 et la Safe Limit (1L), puis étirée ou
+            comprimée pour que l'Upper Safe Bound tombe exactement sur la
+            frontière "Increasing Risk" / "High-Risk Zone" (anciennement 2L) ;
+            au-delà de l'UB, la pente du segment [Safe Limit, UB] est
+            prolongée. Les traits Safe Limit et Upper Safe Bound sont ainsi
+            alignés verticalement d'une ligne à l'autre, et toutes les
+            abscisses de la ligne (bulles, segments de sensibilité, Lower Safe
+            Bound) suivent cette échelle. Les graduations "nL" (axe principal
+            et axe de rupture), qui n'ont plus de sens commun, sont masquées.
+            Pas de rupture d'axe : l'axe principal occupe toute la largeur,
+            jusqu'à x_main_max, élargi si besoin (même borne pour toutes les
+            lignes) pour contenir la bulle la plus à droite de la figure.
+            Une ligne sans Upper Safe Bound (ou avec UB <= Safe Limit) garde
+            l'échelle 1L.
         region_codes: optionnel, {nom_scénario: code EXIOBASE} pour forcer le
             rattachement d'un scénario à une ligne de shares_df, au lieu de le
             déduire de son nom.
@@ -880,31 +897,43 @@ def create_overshoot_safe_space_figure_by_region(
     fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
     gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
-    top_main_ax = None
-
-    for row_idx, subprocess_name in enumerate(subprocesses):
-        ax = fig.add_subplot(gs[row_idx, 0])
-        ax_ext = fig.add_subplot(gs[row_idx, 1], sharey=ax)
-        ax.set_zorder(3)
-        ax_ext.set_zorder(2)
-        ax_ext.patch.set_alpha(0.0)
-        if row_idx == 0:
-            top_main_ax = ax
-
-        unit_text = _get_lp_unit(seuils_df, subprocess_name, unit_row) if show_value_bounds else ""
-
+    def compute_row(subprocess_name):
+        """Budgets, limites et positions (remises à l'échelle si scale_UB) des
+        bulles d'une ligne, ou None si aucun budget n'est disponible."""
         # Un budget par scénario (= par pays) : le budget de référence sert à
         # positionner les bulles de ce scénario, et les budgets min/max à
         # encadrer le segment de sensibilité.
         budgets = {name: budget_of(subprocess_name, name) for name in scenario_names}
         if all(b is None for b in budgets.values()):
-            ax.text(0.5, 0.5, f"{subprocess_name}: limite basse manquante", transform=ax.transAxes,
-                    ha="center", va="center", fontsize=10, color="#7a7a7a")
-            ax.set_xlim(0, x_main_max)
-            ax.set_ylim(0, 1)
-            ax.set_yticks([])
-            ax_ext.set_visible(False)
-            continue
+            return None
+
+        # Les traits Lower/Upper Safe Bound sont communs à la ligne : leur
+        # position relative (Budget_mondial_LOWER/UB / Budget_mondial_LB) est la
+        # même pour tous les pays, la part se simplifiant dans le rapport. On
+        # les calcule donc avec le budget du scénario de référence.
+        ref_name = next(name for name in scenario_names if budgets[name])
+        ref_lb = budgets[ref_name]
+        lower_val = budget_of(subprocess_name, ref_name, threshold_kind="lower")
+        ub_val = budget_of(subprocess_name, ref_name, threshold_kind="ub")
+        lower_rel = (lower_val / ref_lb) if lower_val is not None else None
+        ub_rel = (ub_val / ref_lb) if ub_val is not None else None
+
+        # scale_UB=True : échelle propre à la ligne, linéaire par morceaux, qui
+        # garde la Safe Limit (1L) sur config.SAFE_LIMIT_REL et amène l'Upper
+        # Safe Bound sur config.RISK_TRANSITION_REL -- les deux traits sont donc
+        # alignés verticalement d'une ligne à l'autre. En dessous de 1L,
+        # l'échelle est inchangée ; au-delà, la pente du segment [1L, UB] est
+        # prolongée. Appliquée à toutes les abscisses de la ligne.
+        ub_slope = None
+        if scale_UB and ub_rel is not None and np.isfinite(ub_rel) and ub_rel > 1:
+            ub_slope = (config.RISK_TRANSITION_REL - config.SAFE_LIMIT_REL) / (ub_rel - 1)
+
+        def scaled(x):
+            if x is None or ub_slope is None:
+                return x
+            if x <= 1:
+                return x * config.SAFE_LIMIT_REL
+            return config.SAFE_LIMIT_REL + (x - 1) * ub_slope
 
         # Calcul des positions relatives (CBA, et PBA si demandé) par scénario
         points = []
@@ -933,22 +962,66 @@ def create_overshoot_safe_space_figure_by_region(
 
             points.append({
                 "sname": sname, "y_pos": scenario_to_y[sname],
-                "abs_cba": abs_cba, "rel_cba": rel_cba,
-                "abs_pba": abs_pba, "rel_pba": rel_pba,
-                "rel_cba_min": rel_cba_min, "rel_cba_max": rel_cba_max,
-                "rel_pba_min": rel_pba_min, "rel_pba_max": rel_pba_max,
+                "abs_cba": abs_cba, "rel_cba": scaled(rel_cba),
+                "abs_pba": abs_pba, "rel_pba": scaled(rel_pba),
+                "rel_cba_min": scaled(rel_cba_min), "rel_cba_max": scaled(rel_cba_max),
+                "rel_pba_min": scaled(rel_pba_min), "rel_pba_max": scaled(rel_pba_max),
             })
+
+        return {"budgets": budgets, "ref_lb": ref_lb, "lower_rel": lower_rel, "ub_rel": ub_rel,
+                "scaled": scaled, "points": points}
+
+    rows = {name: compute_row(name) for name in subprocesses}
+
+    # scale_UB=True : pas de rupture d'axe. L'axe principal occupe toute la
+    # largeur, et sa borne droite est commune à toutes les lignes (pour garder
+    # les traits Safe Limit/UB alignés) : x_main_max, élargi si besoin pour
+    # contenir la bulle (ou l'extrémité de segment de sensibilité) la plus à
+    # droite de la figure.
+    x_axis_max = x_main_max
+    if scale_UB:
+        all_row_x = [
+            p[key] for row in rows.values() if row is not None for p in row["points"]
+            for key in ("rel_cba", "rel_pba", "rel_cba_max", "rel_pba_max") if p[key] is not None
+        ]
+        if all_row_x:
+            x_axis_max = max(x_main_max, max(all_row_x) * 1.04)
+
+    top_main_ax = None
+
+    for row_idx, subprocess_name in enumerate(subprocesses):
+        ax = fig.add_subplot(gs[row_idx, :] if scale_UB else gs[row_idx, 0])
+        ax_ext = fig.add_subplot(gs[row_idx, 1], sharey=ax)
+        ax.set_zorder(3)
+        ax_ext.set_zorder(2)
+        ax_ext.patch.set_alpha(0.0)
+        if row_idx == 0:
+            top_main_ax = ax
+
+        unit_text = _get_lp_unit(seuils_df, subprocess_name, unit_row) if show_value_bounds else ""
+
+        row = rows[subprocess_name]
+        if row is None:
+            ax.text(0.5, 0.5, f"{subprocess_name}: limite basse manquante", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=10, color="#7a7a7a")
+            ax.set_xlim(0, x_axis_max)
+            ax.set_ylim(0, 1)
+            ax.set_yticks([])
+            ax_ext.set_visible(False)
+            continue
+        budgets, ref_lb, points, scaled = row["budgets"], row["ref_lb"], row["points"], row["scaled"]
+        lower_rel, ub_rel = row["lower_rel"], row["ub_rel"]
 
         # Dépassement d'axe : agrège TOUTES les valeurs x présentes sur cette
         # ligne (pas juste cba/pba en dur), pour rester correct si une autre
-        # série s'ajoute un jour.
+        # série s'ajoute un jour. Jamais de rupture avec scale_UB=True.
         all_x = [p["rel_cba"] for p in points] + [p["rel_pba"] for p in points if p["rel_pba"] is not None]
-        overflow = [x for x in all_x if x > x_main_max]
-        use_break = len(overflow) > 0
+        overflow = [x for x in all_x if x > x_axis_max]
+        use_break = len(overflow) > 0 and not scale_UB
 
-        ax.set_xlim(0, x_main_max)
+        ax.set_xlim(0, x_axis_max)
         ax.set_ylim(0, 1)
-        _draw_lp_background(ax, 0, x_main_max)
+        _draw_lp_background(ax, 0, x_axis_max)
 
         if use_break:
             x2_min = min(overflow) * 0.995
@@ -972,16 +1045,9 @@ def create_overshoot_safe_space_figure_by_region(
         else:
             ax_ext.set_visible(False)
 
-        # Les traits Lower/Upper Safe Bound sont communs à la ligne : leur
-        # position relative (Budget_mondial_LOWER/UB / Budget_mondial_LB) est la
-        # même pour tous les pays, la part se simplifiant dans le rapport. On
-        # les calcule donc avec le budget du scénario de référence.
-        ref_name = next(name for name in scenario_names if budgets[name])
-        ref_lb = budgets[ref_name]
-        lower_val = budget_of(subprocess_name, ref_name, threshold_kind="lower")
-        ub_val = budget_of(subprocess_name, ref_name, threshold_kind="ub")
-        lower_rel = (lower_val / ref_lb) if lower_val is not None else None
-        ub_rel = (ub_val / ref_lb) if ub_val is not None else None
+        lower_rel = scaled(lower_rel)
+        ub_rel = scaled(ub_rel)
+        safe_x = scaled(1.0)
         distinct_budgets = {round(b, 12) for b in budgets.values() if b}
         lb_label = _fmt_abs(ref_lb) if (show_value_bounds and len(distinct_budgets) == 1) else None
 
@@ -992,11 +1058,11 @@ def create_overshoot_safe_space_figure_by_region(
         # display_bounds=True, jamais leur valeur.
         if display_bounds and lower_rel is not None and lower_rel >= 0:
             ax.axvline(lower_rel, ymin=0.10, ymax=0.90, color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3, zorder=3)
-        ax.axvline(1, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
+        ax.axvline(safe_x, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
         if lb_label is not None:
-            ax.text(1, 0.93, lb_label, color="#0d9a33", fontsize=11, fontweight="bold",
+            ax.text(safe_x, 0.93, lb_label, color="#0d9a33", fontsize=11, fontweight="bold",
                     ha="center", va="bottom", zorder=5)
-        if display_bounds and ub_rel is not None and ub_rel <= x_main_max:
+        if display_bounds and ub_rel is not None and ub_rel <= x_axis_max:
             ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
 
         # Bulles CBA (pleines) + PBA (hachurées, si show_pba), avec segment de
@@ -1004,7 +1070,7 @@ def create_overshoot_safe_space_figure_by_region(
         for p in points:
             style = scenario_style.get(p["sname"], colors.REGION_CODE_FALLBACK)
 
-            in_ext_cba = use_break and p["rel_cba"] > x_main_max and ax_ext.get_visible()
+            in_ext_cba = use_break and p["rel_cba"] > x_axis_max and ax_ext.get_visible()
             target_ax_cba = ax_ext if in_ext_cba else ax
             if p["rel_cba_min"] is not None:
                 _plot_sensitivity_segment(target_ax_cba, p["rel_cba_min"], p["rel_cba_max"], p["y_pos"],
@@ -1014,7 +1080,7 @@ def create_overshoot_safe_space_figure_by_region(
 
             if p["rel_pba"] is not None:
                 hatch_color = "white" if "trend" in p["sname"].lower() else "black"
-                in_ext_pba = use_break and p["rel_pba"] > x_main_max and ax_ext.get_visible()
+                in_ext_pba = use_break and p["rel_pba"] > x_axis_max and ax_ext.get_visible()
                 target_ax_pba = ax_ext if in_ext_pba else ax
                 if p["rel_pba_min"] is not None:
                     _plot_sensitivity_segment(target_ax_pba, p["rel_pba_min"], p["rel_pba_max"], p["y_pos"],
@@ -1059,9 +1125,14 @@ def create_overshoot_safe_space_figure_by_region(
             axis.grid(False)
             for spine in ("left", "right", "bottom"):
                 axis.spines[spine].set_visible(False)
-            axis.spines["top"].set_visible((axis is ax and row_idx == 0) or (axis is ax_ext and use_break))
+            axis.spines["top"].set_visible(
+                not scale_UB and ((axis is ax and row_idx == 0) or (axis is ax_ext and use_break))
+            )
             axis.xaxis.tick_top()
             axis.tick_params(axis="x", length=4, pad=4)
+            if scale_UB:
+                # Échelle propre à chaque ligne : pas de graduation "nL" commune.
+                axis.set_xticks([])
 
         if row_idx != 0:
             ax.tick_params(axis="x", labeltop=False, top=False)
@@ -1069,12 +1140,14 @@ def create_overshoot_safe_space_figure_by_region(
             ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
 
     # Axe X principal commun (1L, 2L, 3L...) + labels de zone, sur la 1ère ligne
+    # (scale_UB=True : labels de zone seuls, l'axe "nL" n'a plus de sens commun)
     if top_main_ax is not None:
-        top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
-        top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
         top_spine_y = (1.0 + hspace + 0.03) if title_above_bar else 1.03
-        top_main_ax.spines["top"].set_position(("axes", top_spine_y))
-        top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
+        if not scale_UB:
+            top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
+            top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
+            top_main_ax.spines["top"].set_position(("axes", top_spine_y))
+            top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
         zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
         for txt, color, x_pos in [
             ("Safe Operating Space", "#0b7d3e", 0.00),
