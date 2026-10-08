@@ -152,7 +152,7 @@ def load_f_x_dom_france(scenario_folder_path, lp_name):
 
 def load_f_y_tot_france(scenario_folder_path, lp_name):
     """Charge dom_{lp}/F_Y_tot.pkl (émissions directes de la demande finale) pour un
-    scénario France, si ce fichier existe pour ce LP (ex. présent pour water/land_use)."""
+    scénario France, si ce fichier existe pour ce LP (ex. présent pour water/land)."""
     file_path = Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}" / "F_Y_tot.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 

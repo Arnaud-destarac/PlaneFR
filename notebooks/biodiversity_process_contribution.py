@@ -5,8 +5,8 @@ en % de l'empreinte totale -- une barre empilée à 100 % par scénario France
 (scénario de base + scénarios de transition 2050, cf. config.get_scenario_folders).
 
 ghg_combustion et ghg_emissions sont regroupés sous "Climate Change" ; les
-autres LP sont renommés pour l'affichage : land_use -> "Land occupation",
-water -> "Water Availability", biogeochemical -> "Eutrophication",
+autres LP sont renommés pour l'affichage : land -> "Land occupation",
+water -> "Water Availability", nutrients -> "Eutrophication",
 air_emissions -> "Other" (voir planefr_lib.plot_process_breakdown).
 
 Génère figures/biodiversity_loss_process_contribution.png.
