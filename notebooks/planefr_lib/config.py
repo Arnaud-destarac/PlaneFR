@@ -19,7 +19,10 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_DIR / "data"
-BASE_DATA_DIR = DATA_DIR / "3.10.2"
+# Version Exiobase des données : redirigeable via la variable d'environnement
+# PLANEFR_EXIOBASE_VERSION (positionnée par les scripts de pipeline de
+# matmat-ademe) ; par défaut 3.11.2 comme d'habitude.
+BASE_DATA_DIR = DATA_DIR / os.environ.get("PLANEFR_EXIOBASE_VERSION", "3.11.2")
 
 # Redirigeable via la variable d'environnement PLANEFR_FIGURES_DIR (utile pour
 # vérifier qu'un notebook s'exécute correctement sans écraser les figures

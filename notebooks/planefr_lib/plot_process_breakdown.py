@@ -20,30 +20,30 @@ from matplotlib.patches import Patch
 PROCESS_GROUP_MAP = {
     "ghg_combustion": "climate_change",
     "ghg_emissions": "climate_change",
-    "land_use": "land_use",
+    "land": "land",
     "water": "water",
-    "biogeochemical": "biogeochemical",
+    "nutrients": "nutrients",
     "air_emissions": "air_emissions",
 }
 
 PROCESS_GROUP_LABELS = {
     "climate_change": "GHG emissions",
-    "land_use": "Land use",
+    "land": "Land use",
     "water": "Water Consumption",
-    "biogeochemical": "N & P surpluses",
+    "nutrients": "N & P surpluses",
     "air_emissions": "Other air emissions",
 }
 
 # Ordre d'empilement (bas -> haut). Un LP absent de PROCESS_GROUP_MAP (ex.
 # raw_materials, sans rapport avec Biodiversity loss) est regroupé sous
 # "air_emissions"/"Other", en fin de pile -- voir group_lp_values.
-PROCESS_GROUP_ORDER = ["climate_change", "land_use", "water", "biogeochemical", "air_emissions"]
+PROCESS_GROUP_ORDER = ["climate_change", "land", "water", "nutrients", "air_emissions"]
 
 PROCESS_GROUP_COLORS = {
     "climate_change": "#F57C00",
-    "land_use": "#1e5631",
+    "land": "#1e5631",
     "water": "#5b9bd5",
-    "biogeochemical": "#c8a878",
+    "nutrients": "#c8a878",
     "air_emissions": "#4e17d1",
 }
 
