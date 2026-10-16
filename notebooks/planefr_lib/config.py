@@ -11,6 +11,7 @@ fonctions de planefr_lib.
 """
 
 import os
+import warnings
 from pathlib import Path
 
 # ============================================================================
@@ -42,9 +43,42 @@ BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
 # est toujours le premier par ordre alphabétique.
 REFERENCE_SCENARIO_IDX = 0
 
+# Nom du dossier du scénario de référence (baseline), attendu dans chaque groupe
+# de scénarios (cf. get_scenario_folders).
+REFERENCE_SCENARIO_NAME = "Base_year_2015"
 
-def get_scenario_folders(exclude_2019=False, exclude_others=False):
-    """Liste les dossiers de scénarios présents dans BASE_DATA_DIR, triés par nom.
+# Groupe de scénarios affiché par défaut : sous-dossier de BASE_DATA_DIR
+# contenant les scénarios de transition 2050 calculés sur un jeu d'accounts
+# donné ("no_SSP" pour les accounts Base_year_2015, "SSP1_2050", "SSP2_2050"...
+# pour les accounts projetés selon un SSP, cf. run_engine_batch.ps1 de
+# matmat-ademe). Redirigeable via la variable d'environnement
+# PLANEFR_SCENARIO_GROUP, ou par notebook via le paramètre scenario_group de
+# get_scenario_folders. "" = anciens scénarios placés directement dans
+# BASE_DATA_DIR.
+SCENARIO_GROUP = os.environ.get("PLANEFR_SCENARIO_GROUP", "no_SSP")
+
+
+def _is_scenario_folder(path):
+    """Un dossier de scénario contient un sous-dossier "extensions" (sortie engine ;
+    "system" est absent des dossiers 2019_* hors France), contrairement aux
+    dossiers de groupe (no_SSP, SSP1_2050...)."""
+    return path.is_dir() and (path / "extensions").is_dir()
+
+
+def get_scenario_groups():
+    """Liste les groupes de scénarios disponibles (sous-dossiers de BASE_DATA_DIR
+    qui ne sont pas eux-mêmes des dossiers de scénario), triés par nom."""
+    return sorted(
+        d.name for d in BASE_DATA_DIR.iterdir() if d.is_dir() and not _is_scenario_folder(d)
+    )
+
+
+def get_scenario_folders(exclude_2019=False, exclude_others=False, scenario_group=None):
+    """Liste les dossiers de scénarios du groupe demandé, triés par nom.
+
+    Les scénarios affichés sont tous ceux du dossier BASE_DATA_DIR / scenario_group
+    (y compris le scénario de référence, REFERENCE_SCENARIO_NAME, qui doit donc s'y
+    trouver). Les dossiers "2019_*" sont toujours lus dans BASE_DATA_DIR.
 
     Args:
         exclude_2019: si True, exclut les dossiers "2019_*" (France/World/Europe_27
@@ -52,16 +86,45 @@ def get_scenario_folders(exclude_2019=False, exclude_others=False):
             — c'est le comportement voulu pour les figures multi-scénarios en valeurs
             absolues. Si False, les inclut — nécessaire pour la figure par habitant
             CBA/PBA, qui compare aussi France vs Europe vs Monde.
+        exclude_others: si True, ne garde que les dossiers "2019_*".
+        scenario_group: groupe de scénarios à afficher ("no_SSP", "SSP1_2050"...,
+            cf. get_scenario_groups()). None = SCENARIO_GROUP ; "" = scénarios
+            placés directement dans BASE_DATA_DIR.
 
     Returns:
         list[Path]: dossiers de scénarios triés par nom.
     """
-    folders = [d for d in BASE_DATA_DIR.iterdir() if d.is_dir()]
-    if exclude_2019:
-        folders = [d for d in folders if "2019" not in d.name]
+    if scenario_group is None:
+        scenario_group = SCENARIO_GROUP
+
+    root_folders = [d for d in BASE_DATA_DIR.iterdir() if _is_scenario_folder(d)]
+    folders_2019 = [d for d in root_folders if "2019" in d.name]
+
+    if scenario_group:
+        group_dir = BASE_DATA_DIR / scenario_group
+        if not group_dir.is_dir():
+            raise ValueError(
+                f"Groupe de scénarios '{scenario_group}' introuvable dans {BASE_DATA_DIR}. "
+                f"Groupes disponibles : {get_scenario_groups()}"
+            )
+        # Tous les scénarios du dossier de groupe, et uniquement eux
+        scenario_folders = [d for d in group_dir.iterdir() if _is_scenario_folder(d)]
+        if REFERENCE_SCENARIO_NAME not in {d.name for d in scenario_folders}:
+            warnings.warn(
+                f"Le groupe '{scenario_group}' ne contient pas {REFERENCE_SCENARIO_NAME} : "
+                f"le scénario de référence (REFERENCE_SCENARIO_IDX) sera le premier par "
+                f"ordre alphabétique."
+            )
+    else:
+        scenario_folders = [d for d in root_folders if "2019" not in d.name]
+
     if exclude_others:
-        folders = [d for d in folders if "2019" in d.name]
-    return sorted(folders)
+        folders = folders_2019
+    elif exclude_2019:
+        folders = scenario_folders
+    else:
+        folders = scenario_folders + folders_2019
+    return sorted(folders, key=lambda d: d.name)
 
 
 # ============================================================================
