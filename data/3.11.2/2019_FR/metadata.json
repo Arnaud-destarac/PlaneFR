@@ -10,10 +10,10 @@
         "user": "Arnaud"
     },
     "run": {
-        "data_utc": "2026-10-08",
-        "time_utc": "13:51:11",
+        "data_utc": "2026-10-16",
+        "time_utc": "15:07:35",
         "datetime_utc": [
-            "2026-10-08T13:51:11+00:00"
+            "2026-10-16T15:07:35+00:00"
         ]
     },
     "workflow": {
@@ -25,7 +25,7 @@
                 "shock": null,
                 "bridges": null
             },
-            "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.11.2\\2019_France",
+            "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.11.2\\2019_FR",
             "export_format": [
                 "pickle"
             ],
