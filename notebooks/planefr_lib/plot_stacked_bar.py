@@ -225,7 +225,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                                    dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
                                    show_values=True, show_thresholds=True, display_bounds=True,
                                    show_variation_bars=False,
-                                   sharing_principle=None, pop_df=None):
+                                   sharing_principle=None, pop_df=None, scenario_group=None):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
     environnemental (Safe Limit, Upper Safe Bound) et le plancher social (DLS)
@@ -237,9 +237,15 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         show_pba: True (défaut) pour afficher la croix production-based (PBA)
             et ses annotations sur chaque barre ; False pour les masquer
             entièrement (barres, texte, légende).
-        show_dls: True (défaut) pour afficher le plancher social (DLS) quand
-            dls_df fournit une valeur pour le LP ; False pour l'ignorer même
-            si dls_df est fourni.
+        show_dls: True (défaut) pour afficher le plancher social (DLS), ainsi
+            que DLS lower bound et DLS upper bound (gradation de bleu, clair ->
+            foncé), quand dls_df fournit une valeur pour le LP ; False pour
+            l'ignorer même si dls_df est fourni. Valeurs nationales lues telles
+            quelles dans la feuille DLS (processing.lookup_dls) : lignes "DLS
+            ..." si scenario_group vaut config.DLS_BASE_YEAR_GROUP ("Base_year"),
+            "DLS 2050 ..." sinon.
+        scenario_group: groupe de scénarios affiché (config.get_scenario_folders),
+            sert uniquement à choisir les lignes DLS (voir show_dls).
         show_values: True (défaut) pour afficher les valeurs/variations
             au-dessus des barres (CBA et PBA) ; False les masque (les barres,
             la croix PBA et les traits de seuil restent inchangés).
@@ -270,15 +276,13 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         (fig, axes_list)
     """
     reference_idx = config.REFERENCE_SCENARIO_IDX
-    # Le scénario de référence (base_year) garde sa position ; les autres sont
-    # affichés dans l'ordre inverse (celui qui était le plus loin dans
-    # l'alphabet -- donc le plus éloigné de la référence -- se retrouve
-    # désormais juste à côté d'elle, et inversement) -- voir la même logique
-    # dans create_radial_synthesis_figure.
-    other_indices = [i for i in range(len(scenario_names)) if i != reference_idx]
-    display_order = list(range(len(scenario_names)))
-    for slot, idx in zip(other_indices, reversed(other_indices)):
-        display_order[slot] = idx
+    # Le scénario de référence (base_year) garde sa position, suivi du
+    # tendanciel, puis des autres scénarios par ordre décroissant de variation
+    # moyenne de l'empreinte vs la référence (plus faible baisse / plus forte
+    # hausse à côté du tendanciel, plus forte baisse le plus loin) -- même
+    # logique que create_radial_synthesis_figure (processing.sort_scenarios_by_reduction).
+    value_keys = ["cba"] + (["pba"] if show_pba else [])
+    display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
     scenario_names = [scenario_names[i] for i in display_order]
     all_scenarios_data = [all_scenarios_data[i] for i in display_order]
     subprocess_to_lp_list = [subprocess_to_lp_list[i] for i in display_order]
@@ -294,6 +298,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     reference_idx = config.REFERENCE_SCENARIO_IDX
     axes_list = []
     legend_categories = set()
+    dls_levels_found = {key: False for key, _, _, _ in config.DLS_LEVELS}  # niveaux DLS tracés (légende)
 
     def _finalize_subplot(ax, ax_top, use_break, top, pba_values, total_values):
         """Deuxième passe (après alignement du 0 % sur la ligne) : fixe la
@@ -417,7 +422,12 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                                                     pop_df=pop_df, sharing_principle=sharing_principle)
         threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
                                                     pop_df=pop_df, sharing_principle=sharing_principle)
-        floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True) if (show_dls and dls_df is not None) else None
+        # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
+        dls_values = {key: None for key, _, _, _ in config.DLS_LEVELS}
+        if show_dls and dls_df is not None:
+            dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
+            for key, suffix, _, _ in config.DLS_LEVELS:
+                dls_values[key] = processing.lookup_dls(dls_df, dls_prefix + suffix, subprocess_name)
         threshold_lower = processing.lookup_threshold(seuils_df, config.THRESHOLD_LOWER_ABS, subprocess_name,
                                                         pop_df=pop_df, sharing_principle=sharing_principle)
 
@@ -430,7 +440,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             threshold_lb = None
             threshold_ub = None
             threshold_lower = None
-            floor_ub = None
+            dls_values = {key: None for key in dls_values}
         elif not display_bounds:
             # Ne masque que les 2 "bounds" (Lower Safe Bound, Upper Safe Bound) :
             # Safe Limit (et DLS, piloté indépendamment par show_dls) reste affiché.
@@ -543,10 +553,13 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         if threshold_ub is not None:
             (ax_top if (use_break_ub and ax_top is not None) else ax).axhline(
                 y=threshold_ub, color="#bc270a", linestyle="-", linewidth=2.5, label="Upper Safe Bound", zorder=10)
-        if floor_ub is not None:
-            ax.axhline(y=floor_ub, color="cyan", linestyle="--", linewidth=2.5, label="DLS", zorder=10)
+        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+            if dls_values[key] is not None:
+                dls_levels_found[key] = True
+                ax.axhline(y=dls_values[key], color=dls_color, linestyle="--", linewidth=2.5,
+                           label=dls_label, zorder=10)
 
-        bottom_max = max(max_total, floor_ub or 0, max_pba)
+        bottom_max = max(max_total, *(v for v in dls_values.values() if v is not None), max_pba)
         if show_variation_bars:
             bottom_max = max(bottom_max, float(np.max(pos_bottom)))
         if threshold_lb is not None and not use_break_lb:
@@ -636,8 +649,10 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
         legend_labels.append("Production-based")
     if show_dls and dls_df is not None and show_thresholds:
-        legend_handles.append(Line2D([0], [0], color="cyan", linestyle="--", linewidth=3))
-        legend_labels.append("DLS")
+        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+            if dls_levels_found[key]:
+                legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3))
+                legend_labels.append(dls_label)
     legend_handles.append(Line2D([0], [0], color="black", linestyle=":", linewidth=1.3))
     legend_labels.append("Base year total (0%)")
     if show_variation_bars:
