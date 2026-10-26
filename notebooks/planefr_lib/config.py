@@ -34,6 +34,11 @@ FACTEURS_CARAC_FILE = DATA_DIR / "facteurs de caractérisation.xlsx"
 BRIDGE_MATRICES_FILE = DATA_DIR / "bridge_matrices.xlsx"
 SEUILS_FILE = DATA_DIR / "seuils.xlsx"
 BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
+# Pressions (empreinte CBA) ventilées par catégorie de ménages (enquête Budget
+# de famille) : 1 feuille par ventilation ("décile", "unité urbaine", "croisé").
+BDF_FILE = PROJECT_DIR.parent / "Github" / "ademe_eemrio" / "impacts_facteurs_agrégé.xlsx"
+BDF_WEIGHT_COL = "weight"
+BDF_TOTAL_ROW = "Total"
 
 # ============================================================================
 # SCÉNARIOS
@@ -272,8 +277,8 @@ LOWER_SAFE_BOUND_COLOR = "#90ee90"
 # Plancher social (DLS) : partagé par plot_radial_synthesis/plot_stacked_bar.
 # Gradation de bleu, du plus clair (DLS lower bound) au plus foncé (DLS upper
 # bound), autour du bleu ciel historique du DLS central.
-DLS_COLOR = "#76bdc8"
-DLS_LOWER_COLOR = "cyan"
+DLS_COLOR = "#00d5ff"
+DLS_LOWER_COLOR = "#20a4be"
 DLS_UPPER_COLOR = "#0077b6"
 
 # Groupe de scénarios "année de base" : DLS lus sur les lignes "DLS ..." de la

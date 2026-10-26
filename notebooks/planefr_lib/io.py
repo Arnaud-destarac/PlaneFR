@@ -80,6 +80,16 @@ def load_population_df():
     return pd.read_excel(config.SEUILS_FILE, sheet_name="Population", index_col=0)
 
 
+def load_bdf(sheet_name="décile"):
+    """Feuille sheet_name de impacts_facteurs_agrégé.xlsx (config.BDF_FILE) :
+    1 ligne par catégorie de ménages (+ une ligne config.BDF_TOTAL_ROW), indexée
+    par la 1re colonne ; colonne config.BDF_WEIGHT_COL (part de la population)
+    puis 1 colonne par sous-processus, nommée "<sous-processus> (<unité>)"."""
+    df = pd.read_excel(config.BDF_FILE, sheet_name=sheet_name, index_col=0)
+    df.index = df.index.map(str)
+    return df
+
+
 def load_budget_shares_df():
     """Feuille 'Parts_regions_EXIOBASE' de budget_shares.xlsx : part du budget
     mondial revenant à chaque région EXIOBASE (+ l'agrégat UE27), indexée par
