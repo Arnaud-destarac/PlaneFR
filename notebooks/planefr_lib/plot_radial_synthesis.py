@@ -42,12 +42,13 @@ plus rappelé au-dessus de chaque case de la bande extérieure.
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from . import colors, config, processing
+from . import colors, config, io, processing
 from .plot_stacked_bar import _build_category_legend
 
 # ============================================================================
@@ -284,6 +285,15 @@ def _annotate(val, ref_val, is_reference, is_pba=False):
     return text, color
 
 
+def _bdf_column(bdf_df, subprocess_name):
+    """Colonne de la feuille Bdf correspondant au sous-processus (nommée
+    "<sous-processus> (<unité>)"), ou None si absente."""
+    for col in bdf_df.columns:
+        if str(col).split(" (")[0].strip() == subprocess_name:
+            return col
+    return None
+
+
 # ============================================================================
 # FIGURE PRINCIPALE
 # ============================================================================
@@ -303,6 +313,7 @@ def create_radial_synthesis_figure(
     sharing_principle=None, pop_df=None,
     scale_UB=False, scale_diff=False,
     scenario_group=None,
+    Bdf=None,
 ):
     """Roue radiale : 1 secteur par LP, 1 barre par scénario, hauteur = valeur /
     Safe Limit. Le cercle Safe Limit (vert, seuil historique config.THRESHOLD_LB_ABS)
@@ -412,6 +423,22 @@ def create_radial_synthesis_figure(
             borné à SCALE_DIFF_CAP_REL (6L) : les barres qui le dépassent vont
             jusqu'au cercle périphérique et leur niveau réel (ex. "16L") est
             écrit juste en dessous (voir r_max). Incompatible avec scale_UB.
+        Bdf: None (défaut) = figure multi-scénarios classique. Sinon, nom d'une
+            feuille de config.BDF_FILE (ex. "décile") : les scénarios sont
+            remplacés par la valeur agrégée (ligne "Total", en 1re position,
+            nuance pleine) puis les catégories de ménages de la 1re colonne de
+            cette feuille (nuance claire), 1 barre pleine chacune, de
+            hauteur = pression de la catégorie / (Safe Limit nationale x
+            weight) -- chaque catégorie reçoit la part "weight" du budget
+            national. Upper/Lower Safe Bound et DLS étant pondérés par le même
+            weight, leur rapport au Safe Limit est inchangé : les arcs restent
+            communs à tout le secteur. La bande extérieure affiche la valeur
+            absolue pour le Total et, pour chaque catégorie, la variation
+            relative de son overshoot (hauteur de barre) par rapport à celui
+            du Total (ex. +20%). show_cba/show_pba,
+            show_categories/show_import_split et le tri des scénarios sont
+            ignorés ; all_scenarios_data ne sert qu'à fixer la liste/l'ordre
+            des LP (scénario de référence).
 
     Returns:
         (fig, ax)
@@ -420,21 +447,36 @@ def create_radial_synthesis_figure(
         raise ValueError("show_cba et show_pba ne peuvent pas être tous les deux False.")
     if scale_UB and scale_diff:
         raise ValueError("scale_UB et scale_diff ne peuvent pas être tous les deux True.")
+    is_bdf = Bdf is not None
+    if is_bdf:
+        show_cba, show_pba = True, False
     combined = show_cba and show_pba
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
-    # Le scénario de référence (base_year) garde sa position, suivi du
-    # tendanciel (config.TREND_SCENARIO_MARKER), puis des autres scénarios par ordre
-    # décroissant de variation moyenne de l'empreinte vs la référence (voir
-    # processing.mean_variation) : la plus faible baisse / plus forte hausse juste à côté
-    # du tendanciel, la plus forte baisse le plus loin.
-    value_keys = (["cba"] if show_cba else []) + (["pba"] if show_pba else [])
-    display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
-    scenario_names = [scenario_names[i] for i in display_order]
-    all_scenarios_data = [all_scenarios_data[i] for i in display_order]
+    if not is_bdf:
+        # Le scénario de référence (base_year) garde sa position, suivi du
+        # tendanciel (config.TREND_SCENARIO_MARKER), puis des autres scénarios par ordre
+        # décroissant de variation moyenne de l'empreinte vs la référence (voir
+        # processing.mean_variation) : la plus faible baisse / plus forte hausse juste à côté
+        # du tendanciel, la plus forte baisse le plus loin.
+        value_keys = (["cba"] if show_cba else []) + (["pba"] if show_pba else [])
+        display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
+        scenario_names = [scenario_names[i] for i in display_order]
+        all_scenarios_data = [all_scenarios_data[i] for i in display_order]
 
     first_scenario_data = all_scenarios_data[reference_idx]
     subprocesses = list(first_scenario_data.keys())
+
+    if is_bdf:
+        # Les "scénarios" deviennent la valeur agrégée (ligne "Total", en
+        # 1re position = référence) suivie des catégories de ménages.
+        bdf_df = io.load_bdf(Bdf)
+        bdf_df = pd.concat([bdf_df.loc[[config.BDF_TOTAL_ROW]],
+                            bdf_df.drop(index=config.BDF_TOTAL_ROW)])
+        bdf_weights = bdf_df[config.BDF_WEIGHT_COL].astype(float).tolist()
+        scenario_names = list(bdf_df.index)
+        reference_idx = 0
+
     n_lp = len(subprocesses)
     n_scenarios = len(scenario_names)
     # En mode combiné, chaque scénario occupe 2 emplacements adjacents (CBA
@@ -474,26 +516,36 @@ def create_radial_synthesis_figure(
         categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
         legend_categories.update(categories)
 
-        cba_values = [processing.extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
-        pba_values = [processing.extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
-        if combined:
-            values = []
-            for cba_val, pba_val in zip(cba_values, pba_values):
-                values.append(cba_val)
-                values.append(pba_val)
+        if is_bdf:
+            # 1 valeur par catégorie de ménages (Total en tête).
+            bdf_col = _bdf_column(bdf_df, subprocess_name)
+            values = [float(v) for v in bdf_df[bdf_col]] if bdf_col is not None else [None] * n_scenarios
+            # Seuils propres à chaque catégorie : seuil national x weight.
+            weights = bdf_weights
+            scale_values = values
         else:
-            values = cba_values if show_cba else pba_values
-        # L'échelle radiale (graduations "NL", plafond) est toujours calée sur
-        # le max CBA/PBA, même en solo (show_cba seul ou show_pba seul) : une
-        # figure PBA seule doit avoir la même graduation qu'une figure CBA
-        # seule ou combinée pour le même secteur, pas une graduation resserrée
-        # sur ses seules valeurs affichées.
-        scale_values = cba_values + pba_values
+            cba_values = [processing.extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
+            pba_values = [processing.extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
+            if combined:
+                values = []
+                for cba_val, pba_val in zip(cba_values, pba_values):
+                    values.append(cba_val)
+                    values.append(pba_val)
+            else:
+                values = cba_values if show_cba else pba_values
+            weights = [1.0] * n_slots
+            # L'échelle radiale (graduations "NL", plafond) est toujours calée sur
+            # le max CBA/PBA, même en solo (show_cba seul ou show_pba seul) : une
+            # figure PBA seule doit avoir la même graduation qu'une figure CBA
+            # seule ou combinée pour le même secteur, pas une graduation resserrée
+            # sur ses seules valeurs affichées.
+            scale_values = cba_values + pba_values
 
         threshold_ref = threshold_lb
         if threshold_ref is not None:
-            rel_values = [(v / threshold_ref) if v is not None else None for v in values]
-            scale_rel_values = [(v / threshold_ref) if v is not None else None for v in scale_values]
+            rel_values = [(v / (threshold_ref * w)) if v is not None else None for v, w in zip(values, weights)]
+            scale_rel_values = (rel_values if is_bdf else
+                                [(v / threshold_ref) if v is not None else None for v in scale_values])
             ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
             lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
             lower_rel = (threshold_lower / threshold_ref) if threshold_lower is not None else None
@@ -611,7 +663,8 @@ def create_radial_synthesis_figure(
             # plus à distinguer CBA/PBA (il n'y en a qu'un affiché) mais le
             # scénario de référence (base_year, nuance pleine -- l'ancienne
             # couleur "CBA") des autres scénarios (nuance claire), à la place
-            # du hachurage "xx" utilisé auparavant.
+            # du hachurage "xx" utilisé auparavant. Bdf : la valeur agrégée
+            # (Total) joue le rôle du scénario de référence.
             return info["color"] if scenario_idx == reference_idx else pba_color
 
         def _draw_cba_bar(theta, scenario_idx):
@@ -635,7 +688,7 @@ def create_radial_synthesis_figure(
             for scenario_idx, (theta, height) in enumerate(zip(pba_centers, pba_heights)):
                 ax.bar([theta], [height], width=bar_width, bottom=0.0,
                        color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
-        elif show_cba:
+        elif show_cba and not is_bdf:
             # Empreinte détaillée disponible (domestique/importé par catégorie) :
             # barre empilée selon show_categories/show_import_split (les deux à
             # False -> 1 segment plein, coloré par _solo_color). to_r() est
@@ -645,7 +698,7 @@ def create_radial_synthesis_figure(
             for scenario_idx, theta in enumerate(centers):
                 _draw_cba_bar(theta, scenario_idx)
         else:
-            # PBA seul : une seule valeur scalaire par (LP, scénario) dans les
+            # PBA seul (ou Bdf) : une seule valeur scalaire par (LP, scénario) dans les
             # données sources -> pas de ventilation possible, barre pleine.
             heights = [r_of(info, rel) if rel is not None else 0.0 for rel in info["rel_values"]]
             for scenario_idx, (theta, height) in enumerate(zip(centers, heights)):
@@ -688,7 +741,12 @@ def create_radial_synthesis_figure(
             val = info["values"][i]
             if val is None:
                 continue
-            text, color = _annotate(val, ref_by_slot[i], is_ref_by_slot[i], is_pba_by_slot[i])
+            if is_bdf and i != reference_idx:
+                # Variation relative de l'overshoot (pression / seuil pondéré)
+                # de la catégorie par rapport à celui de la valeur agrégée.
+                text, color = _annotate(info["rel_values"][i], info["rel_values"][reference_idx], False, True)
+            else:
+                text, color = _annotate(val, ref_by_slot[i], is_ref_by_slot[i], is_pba_by_slot[i])
             ax.text(theta, r_ring_mid, text, ha="center", va="center",
                     fontsize=14.5, fontweight="bold", color=color, zorder=9)
 
@@ -783,7 +841,9 @@ def create_radial_synthesis_figure(
             if any(info["dls_rels"][key] is not None for info in lp_info):
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3, label=dls_label))
 
-    if show_cba and show_categories:
+    if is_bdf:
+        pass  # barres pleines, une couleur par LP : rien à expliquer au-delà des seuils
+    elif show_cba and show_categories:
         cat_handles, cat_labels = _build_category_legend(colors.sort_categories(list(legend_categories)))
         if not show_import_split:
             cat_handles, cat_labels = cat_handles[:-1], cat_labels[:-1]  # retire "Import" : aucun hachurage tracé
@@ -798,6 +858,9 @@ def create_radial_synthesis_figure(
         # pour tous les LP : les deux nuances distinguent ici CBA/PBA.
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Consumption-based"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Production-based"))
+    elif is_bdf:
+        legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Total (France)"))
+        legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Household categories"))
     else:
         # Une seule comptabilité affichée : les deux nuances distinguent à la
         # place le scénario de référence des autres (voir _solo_color).
