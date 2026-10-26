@@ -269,6 +269,29 @@ CATEGORY_COLOR_MAP = {
 # rester cohérent entre les 3 figures.
 LOWER_SAFE_BOUND_COLOR = "#90ee90"
 
+# Plancher social (DLS) : partagé par plot_radial_synthesis/plot_stacked_bar.
+# Gradation de bleu, du plus clair (DLS lower bound) au plus foncé (DLS upper
+# bound), autour du bleu ciel historique du DLS central.
+DLS_COLOR = "#76bdc8"
+DLS_LOWER_COLOR = "cyan"
+DLS_UPPER_COLOR = "#0077b6"
+
+# Groupe de scénarios "année de base" : DLS lus sur les lignes "DLS ..." de la
+# feuille DLS ; pour tout autre groupe (scénarios 2050), sur "DLS 2050 ...".
+DLS_BASE_YEAR_GROUP = "Base_year"
+
+# (clé, suffixe de ligne dans la feuille DLS, couleur, libellé de légende)
+DLS_LEVELS = (
+    ("dls_lower", " lower bound", DLS_LOWER_COLOR, "DLS lower bound"),
+    ("dls", "", DLS_COLOR, "DLS"),
+    ("dls_upper", " upper bound", DLS_UPPER_COLOR, "DLS upper bound"),
+)
+
+# Repère (insensible à la casse) du scénario tendanciel dans les noms de
+# dossier ("TEND_2050", "TEND") : placé juste à côté de la référence dans les
+# figures qui trient les scénarios (processing.sort_scenarios_by_reduction).
+TREND_SCENARIO_MARKER = "TEND"
+
 # ============================================================================
 # FIGURE OVERSHOOT / SAFE OPERATING SPACE
 # ============================================================================

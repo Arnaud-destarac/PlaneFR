@@ -10,10 +10,10 @@
         "user": "Arnaud"
     },
     "run": {
-        "data_utc": "2026-10-09",
-        "time_utc": "12:25:31",
+        "data_utc": "2026-10-21",
+        "time_utc": "11:54:43",
         "datetime_utc": [
-            "2026-10-09T12:25:31+00:00"
+            "2026-10-21T11:54:43+00:00"
         ]
     },
     "workflow": {
@@ -25,7 +25,7 @@
                 "shock": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\MatMat\\matmat-ademe\\data\\4-PlaneFR\\2-shocks\\1-transitions_2050\\S1_2050",
                 "bridges": null
             },
-            "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.11.2\\S1_2050",
+            "path_out": "C:\\Users\\Arnaud\\Documents\\CIRED\\PlaneFR\\Code\\Module_PlaneFR\\data\\3.11.2\\no_SSP\\S1_2050",
             "export_format": [
                 "pickle"
             ],

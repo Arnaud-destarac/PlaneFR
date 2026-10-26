@@ -14,6 +14,7 @@ pays : partage égal per capita (compute_sharing_seuil, à partir de la feuille
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from . import colors, config, io
@@ -214,6 +215,65 @@ def compute_sharing_seuil(seuils_df, pop_df, subprocess_name, sharing_principle,
         seuil *= lookup_population(pop_df, population_row, "France")
 
     return seuil
+
+
+def extract_value(payload, value_key):
+    """Empreinte d'un (LP, scénario) : CBA = domestique + importé ; PBA =
+    payload["pba"] (déjà un scalaire). None si absent/non-fini."""
+    if payload is None:
+        return None
+    if value_key == "pba":
+        val = payload.get("pba")
+    else:
+        val = float(payload["domestique"].sum() + payload["importé"].sum())
+    return float(val) if val is not None and np.isfinite(val) else None
+
+
+def mean_variation(scenario_data, reference_data, value_keys):
+    """Variation relative moyenne (ex. -0.3 = -30 %) de l'empreinte d'un
+    scénario vs la référence, sur tous les LP et toutes les comptabilités
+    demandées (value_keys, "cba" et/ou "pba") -- None si aucune valeur comparable."""
+    variations = []
+    for subprocess_name, ref_payload in reference_data.items():
+        for key in value_keys:
+            ref_val = extract_value(ref_payload, key)
+            val = extract_value(scenario_data.get(subprocess_name), key)
+            if ref_val and val is not None:
+                variations.append((val - ref_val) / abs(ref_val))
+    return float(np.mean(variations)) if variations else None
+
+
+def sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys):
+    """Ordre d'affichage (indices) : référence en premier, puis le tendanciel
+    (nom contenant config.TREND_SCENARIO_MARKER), puis les autres scénarios par
+    variation moyenne décroissante (mean_variation) : la plus faible baisse /
+    plus forte hausse juste à côté du tendanciel, la plus forte baisse le plus
+    loin."""
+    reference_data = all_scenarios_data[reference_idx]
+    others = [i for i in range(len(scenario_names)) if i != reference_idx]
+    trend = [i for i in others if config.TREND_SCENARIO_MARKER in scenario_names[i].upper()]
+    rest = [i for i in others if i not in trend]
+
+    def sort_key(i):
+        variation = mean_variation(all_scenarios_data[i], reference_data, value_keys)
+        return -np.inf if variation is None else variation
+
+    return [reference_idx] + trend + sorted(rest, key=sort_key, reverse=True)
+
+
+def lookup_dls(dls_df, dls_row_name, subprocess_name):
+    """Plancher social DLS national (France), en "Figures unit", lu tel quel sur
+    la ligne dls_row_name de la feuille DLS (ex. "DLS", "DLS 2050 upper bound" --
+    les lignes "... (p.cap)", par habitant, sont distinctes et ignorées).
+
+    Returns:
+        float, ou None si la ligne/colonne est absente ou vide.
+    """
+    # Les libellés de la feuille DLS ne sont pas toujours propres ("DLS ")
+    stripped_index = {row.strip(): row for row in dls_df.index if isinstance(row, str)}
+    if dls_row_name not in stripped_index:
+        return None
+    return lookup_seuil(dls_df, stripped_index[dls_row_name], subprocess_name, require_positive=True)
 
 
 def lookup_threshold(seuils_df, threshold_row_name, subprocess_name, pop_df=None, sharing_principle=None):

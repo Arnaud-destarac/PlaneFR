@@ -58,7 +58,7 @@ LP_COLORS = {
     "N surplus":                 "#DC8968",
     "P surplus":                 "#6D4C41",  
     "Blue water consumption":    "#096DB4",  
-    "Cropland use":               "#3B5A17", 
+    "Agricultural land":               "#3B5A17", 
     "GHG emissions":              "#F57C00",
     "Biodiversity loss - PDF":          "#B12BB1",
     "Biodiversity loss - HANPP":          "#FC85FC", 
@@ -68,16 +68,14 @@ _FALLBACK_LP_COLOR = "#4c78a8"
 
 LB_COLOR = "#0d9a33"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Safe Limit")
 UB_COLOR = "#bc270a"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Upper Safe Bound")
-DLS_COLOR = "cyan"      # identique à plot_stacked_bar.py ("DLS")
 LOWER_COLOR = config.LOWER_SAFE_BOUND_COLOR  # identique à plot_stacked_bar.py / plot_overshoot.py ("Lower Safe Bound")
 
-# En radial_power=1 (échelle linéaire stricte), un secteur dont le scénario de
-# référence (base_year) dépasse la Safe Limit de plus que ce facteur ferait
-# exploser l'échelle radiale de tous les secteurs. Pour ce secteur uniquement,
-# on recale alors la référence sur la Upper Safe Bound (voir use_ub_ref plus bas) :
-# le cercle "1L" y devient rouge (UB) au lieu de vert (LB).
-
-OVERSHOOT_REBASE_THRESHOLD = 4.0
+# Un fort dépassement (ex. GHG emissions à ~16L) écraserait l'échelle radiale
+# de tous les secteurs : avec scale_diff=True, le plafond radial est borné à
+# ce multiple de la Safe Limit, quel que soit radial_power (sauf r_max
+# explicite). Les barres qui le dépassent sont tronquées au cercle
+# périphérique et leur niveau réel ("16L") est écrit à leur sommet.
+SCALE_DIFF_CAP_REL = 6.0
 
 # Marge (fraction de la valeur max relative -- barre ou seuil UB/LB/DLS) ajoutée
 # au-dessus de cette valeur pour fixer le plafond radial : la bande extérieure
@@ -149,40 +147,14 @@ def _ub_slope(ub_rel):
     return (UB_SCALED_REL - 1) / (ub_rel - 1)
 
 
-def _diff_slope(sector_max_rel, cap_rel):
-    """Pente de l'échelle scale_diff au-delà de la Safe Limit : amène le point
-    le plus haut du secteur (sector_max_rel) sur le plafond commun cap_rel.
-    None si le secteur reste en-deçà de la Safe Limit (le cercle 1L étant fixe,
-    rien à étirer) -- il garde alors l'échelle 1L."""
-    if sector_max_rel is None or not np.isfinite(sector_max_rel) or sector_max_rel <= 1 or cap_rel <= 1:
-        return None
-    return (cap_rel - 1) / (sector_max_rel - 1)
-
-
 def _scale_rel(rel, slope):
-    """Échelle propre à un secteur (scale_UB ou scale_diff, même logique que
+    """Échelle propre à un secteur (scale_UB, même logique que
     plot_overshoot.create_overshoot_safe_space_figure_by_region) : linéaire
     par morceaux, inchangée entre 0 et la Safe Limit (1L), puis de pente
-    slope au-delà (voir _ub_slope/_diff_slope). Identité si slope est None."""
+    slope au-delà (voir _ub_slope). Identité si slope est None."""
     if rel is None or slope is None or rel <= 1:
         return rel
     return 1 + (rel - 1) * slope
-
-
-def _nice_sector_ticks(sector_max_rel, max_ticks=5):
-    """Graduations propres à un secteur (scale_diff), en multiples de la Safe
-    Limit : 1L, puis les multiples d'un pas "rond" (1/2/2.5/5 x 10^k) compris
-    entre 1L et sector_max_rel, au plus ~max_ticks au-dessus de 1L. Les pas
-    peuvent être fractionnaires (ex. 1.2L, 1.4L) pour un secteur peu au-dessus
-    de sa limite."""
-    if sector_max_rel is None or not np.isfinite(sector_max_rel) or sector_max_rel <= 1:
-        return [1]
-    raw_step = (sector_max_rel - 1) / max_ticks
-    magnitude = 10 ** np.floor(np.log10(raw_step))
-    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw_step)
-    k_start = int(np.floor(1 / step)) + 1
-    k_end = int(np.floor(sector_max_rel / step + 1e-9))
-    return [1] + [round(float(k * step), 10) for k in range(k_start, k_end + 1)]
 
 
 def _format_tick(t):
@@ -231,24 +203,10 @@ def _nice_radial_ticks(rel_cap, max_ticks=6):
 # ============================================================================
 
 
-def _extract_value(payload, value_key):
-    """CBA = domestique + importé (mêmes totaux que create_synthesis_figure_by_lp) ;
-    PBA = payload["pba"] (déjà un scalaire). None si absent/non-fini."""
-    if payload is None:
-        return None
-    if value_key == "pba":
-        val = payload.get("pba")
-    else:
-        val = float(payload["domestique"].sum() + payload["importé"].sum())
-    return float(val) if val is not None and np.isfinite(val) else None
-
-
 def _stack_segments(payload, categories, threshold_ref, group_by_category,
                      show_categories, show_import_split, fallback_color):
     """Décompose l'empreinte CBA d'un (LP, scénario) en segments empilables, en
-    unités relatives à threshold_ref (Safe Limit, sauf secteur recalé sur la
-    Upper Safe Bound -- voir use_ub_ref dans create_radial_synthesis_figure), prêts
-    à dessiner (couleur déjà résolue). to_r() doit être appliqué aux BORNES
+    unités relatives à threshold_ref (Safe Limit), prêts à dessiner (couleur déjà résolue). to_r() doit être appliqué aux BORNES
     cumulées par l'appelant (pas à la hauteur du segment), seule façon de
     rester correct en échelle non-linéaire (radial_power != 1).
 
@@ -344,6 +302,7 @@ def create_radial_synthesis_figure(
     figsize=(16, 16),
     sharing_principle=None, pop_df=None,
     scale_UB=False, scale_diff=False,
+    scenario_group=None,
 ):
     """Roue radiale : 1 secteur par LP, 1 barre par scénario, hauteur = valeur /
     Safe Limit. Le cercle Safe Limit (vert, seuil historique config.THRESHOLD_LB_ABS)
@@ -391,8 +350,15 @@ def create_radial_synthesis_figure(
             si show_categories=True et show_import_split=True (ordre
             d'empilement dom/imp entrelacé par catégorie, ou tout dom puis tout
             imp).
-        show_dls, dls_df: si show_dls=True, ajoute un arc DLS (plancher social)
-            par secteur, quand seuils.xlsx/dls_df fournit une valeur pour ce LP.
+        show_dls, dls_df: si show_dls=True, ajoute par secteur les arcs DLS
+            (plancher social), DLS lower bound et DLS upper bound (gradation de
+            bleu, clair -> foncé), quand dls_df fournit une valeur pour ce LP :
+            valeurs nationales lues telles quelles dans la feuille DLS (voir
+            processing.lookup_dls). Lignes "DLS ..."
+            si scenario_group vaut DLS_BASE_YEAR_GROUP ("Base_year"), "DLS 2050
+            ..." sinon.
+        scenario_group: groupe de scénarios affiché (config.get_scenario_folders),
+            sert uniquement à choisir les lignes DLS (voir show_dls).
         radial_power: exposant de la transformation rayon = (valeur/LB)**radial_power.
             1.0 = échelle linéaire stricte. 0.5 (défaut) = racine carrée. Plus
             la valeur est petite (ex. 1/3), plus l'échelle est "dilatée" : les
@@ -402,23 +368,17 @@ def create_radial_synthesis_figure(
             -- même principe que sqrt, en plus prononcé. Le cercle Safe Limit
             reste à un rayon constant (=1) quelle que soit la valeur, car 1
             élevé à n'importe quelle puissance vaut toujours 1.
-            Cas particulier radial_power=1 (échelle linéaire, donc sans
-            compression des forts dépassements) : pour un secteur dont le
-            scénario de référence (base_year) dépasse la Safe Limit de plus
-            de OVERSHOOT_REBASE_THRESHOLD (5), la référence de CE secteur est
-            recalée sur la Upper Safe Bound au lieu de la Safe Limit (use_ub_ref).
-            Concrètement, dans ce secteur : les barres/segments sont exprimés
-            en multiples de la Upper Safe Bound, l'arc Upper Safe Bound se retrouve
-            au rayon 1 (rouge) au lieu de l'arc Safe Limit (vert), et la
-            Safe Limit (< 1) reste tracée, positionnée relativement à cette
-            nouvelle référence. Le "cercle à 1L" de la figure est donc, dans
-            ce mode, composite : vert pour les secteurs sous le seuil de
-            dépassement, rouge pour ceux au-dessus.
+            Quelle que soit sa valeur, avec scale_diff=True le plafond radial
+            est borné à SCALE_DIFF_CAP_REL (6L) -- voir r_max.
         lp_colors: dict optionnel pour surcharger/étendre LP_COLORS.
         r_max: plafond optionnel de l'axe radial, en multiples du Safe Limit
             (même unité que les graduations "NL") ; None = auto-calculé depuis
             les données (valeurs + seuils affichés -- Upper/Lower Safe Bound
-            si display_bounds=True, DLS si show_dls=True).
+            si display_bounds=True, DLS si show_dls=True), borné à
+            SCALE_DIFF_CAP_REL si scale_diff=True. Avec scale_diff=True, toute
+            barre qui dépasse le plafond est tronquée au cercle périphérique,
+            avec son niveau réel (ex. "16L") écrit à son sommet ; les arcs de
+            seuil au-delà du plafond ne sont pas tracés.
         display_bounds: True (défaut) affiche les arcs Lower Safe Bound et
             Upper Safe Bound en plus du cercle Safe Limit (toujours affiché).
             False les masque (et ne les compte plus dans le calcul de r_max).
@@ -445,19 +405,13 @@ def create_radial_synthesis_figure(
             concentriques continus : Safe Limit (vert) et Upper Safe Bound
             (rouge, si display_bounds=True). Barres, Lower Safe Bound et DLS
             suivent cette échelle. Les graduations "NL" au-delà de 1L, qui
-            n'ont plus de sens commun, sont masquées, et le recalage use_ub_ref
-            (radial_power=1) est désactivé. Un secteur sans Upper Safe Bound
-            (ou avec UB <= Safe Limit) garde l'échelle 1L.
-        scale_diff: si True, échelle propre à chaque secteur, linéaire par
-            morceaux comme scale_UB (inchangée entre 0 et 1L, le cercle Safe
-            Limit reste donc commun), mais étirée au-delà de 1L pour que le
-            point le plus haut du secteur (barre, ou seuil affiché UB/DLS)
-            arrive au plafond commun de la roue (r_max s'il est fourni, sinon
-            le point le plus haut de toute la figure). Chaque secteur reçoit
-            ses propres graduations "NL" (éventuellement fractionnaires, ex.
-            1.2L), tracées en arcs dans le secteur et annotées à son bord.
-            Un secteur entièrement sous 1L garde l'échelle 1L. Incompatible
-            avec scale_UB ; désactive le recalage use_ub_ref.
+            n'ont plus de sens commun, sont masquées. Un secteur sans Upper
+            Safe Bound (ou avec UB <= Safe Limit) garde l'échelle 1L.
+        scale_diff: False (défaut) = affichage classique, échelle commune
+            jusqu'au point le plus haut de la figure. True = plafond radial
+            borné à SCALE_DIFF_CAP_REL (6L) : les barres qui le dépassent vont
+            jusqu'au cercle périphérique et leur niveau réel (ex. "16L") est
+            écrit juste en dessous (voir r_max). Incompatible avec scale_UB.
 
     Returns:
         (fig, ax)
@@ -469,14 +423,13 @@ def create_radial_synthesis_figure(
     combined = show_cba and show_pba
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
-    # Le scénario de référence (base_year) garde sa position ; les autres sont
-    # affichés dans l'ordre inverse (celui qui était le plus loin dans
-    # l'alphabet -- donc le plus éloigné de la référence -- se retrouve
-    # désormais juste à côté d'elle, et inversement).
-    other_indices = [i for i in range(len(scenario_names)) if i != reference_idx]
-    display_order = list(range(len(scenario_names)))
-    for slot, idx in zip(other_indices, reversed(other_indices)):
-        display_order[slot] = idx
+    # Le scénario de référence (base_year) garde sa position, suivi du
+    # tendanciel (config.TREND_SCENARIO_MARKER), puis des autres scénarios par ordre
+    # décroissant de variation moyenne de l'empreinte vs la référence (voir
+    # processing.mean_variation) : la plus faible baisse / plus forte hausse juste à côté
+    # du tendanciel, la plus forte baisse le plus loin.
+    value_keys = (["cba"] if show_cba else []) + (["pba"] if show_pba else [])
+    display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
     scenario_names = [scenario_names[i] for i in display_order]
     all_scenarios_data = [all_scenarios_data[i] for i in display_order]
 
@@ -511,15 +464,18 @@ def create_radial_synthesis_figure(
         threshold_lower = processing.lookup_threshold(seuils_df, config.THRESHOLD_LOWER_ABS, subprocess_name,
                                                         pop_df=pop_df, sharing_principle=sharing_principle)
         unit_text = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, subprocess_name)
-        floor_ub = None
+        # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
+        dls_values = {key: None for key, _, _, _ in config.DLS_LEVELS}
         if show_dls and dls_df is not None:
-            floor_ub = processing.lookup_seuil(dls_df, "Moyenne France", subprocess_name, require_positive=True)
+            dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
+            for key, suffix, _, _ in config.DLS_LEVELS:
+                dls_values[key] = processing.lookup_dls(dls_df, dls_prefix + suffix, subprocess_name)
 
         categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
         legend_categories.update(categories)
 
-        cba_values = [_extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
-        pba_values = [_extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
+        cba_values = [processing.extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
+        pba_values = [processing.extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
         if combined:
             values = []
             for cba_val, pba_val in zip(cba_values, pba_values):
@@ -534,79 +490,55 @@ def create_radial_synthesis_figure(
         # sur ses seules valeurs affichées.
         scale_values = cba_values + pba_values
 
-        # Dépassement du scénario de référence (base_year) par rapport à la
-        # Safe Limit (max CBA/PBA en mode combiné, même logique que
-        # plot_overshoot._sort_subprocesses_by_france_overshoot) : détermine
-        # si ce secteur doit être recalé sur la Upper Safe Bound (voir use_ub_ref
-        # dans la docstring de radial_power). Uniquement en radial_power=1 --
-        # aux autres puissances, la compression de l'échelle rend ce recalage
-        # inutile.
-        base_year_slots = [reference_idx * 2, reference_idx * 2 + 1] if combined else [reference_idx]
-        base_year_overshoot = None
-        if threshold_lb:
-            base_year_rels = [values[i] / threshold_lb for i in base_year_slots if values[i] is not None]
-            if base_year_rels:
-                base_year_overshoot = max(base_year_rels)
-        use_ub_ref = (
-            not scale_UB
-            and not scale_diff
-            and radial_power == 1
-            and threshold_lb is not None
-            and threshold_ub is not None
-            and base_year_overshoot is not None
-            and base_year_overshoot > OVERSHOOT_REBASE_THRESHOLD
-        )
-        threshold_ref = threshold_ub if use_ub_ref else threshold_lb
-
+        threshold_ref = threshold_lb
         if threshold_ref is not None:
             rel_values = [(v / threshold_ref) if v is not None else None for v in values]
             scale_rel_values = [(v / threshold_ref) if v is not None else None for v in scale_values]
             ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
             lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
             lower_rel = (threshold_lower / threshold_ref) if threshold_lower is not None else None
-            dls_rel = (floor_ub / threshold_ref) if floor_ub is not None else None
+            dls_rels = {key: (v / threshold_ref) if v is not None else None for key, v in dls_values.items()}
         else:
             rel_values = [None] * n_slots
             scale_rel_values = []
             ub_rel = None
             lb_rel = None
             lower_rel = None
-            dls_rel = None
+            dls_rels = {key: None for key in dls_values}
 
         # scale_UB : pente propre au secteur (None = échelle 1L inchangée). Les
         # valeurs relatives restent stockées non remises à l'échelle ;
-        # _scale_rel est appliqué au moment du tracé (voir r_of). La pente
-        # scale_diff dépend du plafond commun, connu seulement après cette
-        # passe : elle est calculée juste après la boucle, depuis sector_max.
+        # _scale_rel est appliqué au moment du tracé (voir r_of).
         slope = _ub_slope(ub_rel) if scale_UB else None
 
         bound_rels = [ub_rel, lower_rel] if display_bounds else []
-        sector_max = None
-        for rel in scale_rel_values + [lb_rel, dls_rel] + bound_rels:
+        for rel in scale_rel_values + [lb_rel, *dls_rels.values()] + bound_rels:
             if rel is not None and np.isfinite(rel):
-                sector_max = rel if sector_max is None else max(sector_max, rel)
                 max_rel = max(max_rel, _scale_rel(rel, slope))
 
         lp_info.append(dict(
             name=subprocess_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
             values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, lower_rel=lower_rel,
-            dls_rel=dls_rel, use_ub_ref=use_ub_ref, slope=slope, ub_slope=slope, sector_max=sector_max,
+            dls_rels=dls_rels, slope=slope, ub_slope=slope,
             color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
         ))
 
-    rel_cap_input = r_max if r_max is not None else max_rel
+    if r_max is not None:
+        rel_cap_input = r_max
+    elif scale_diff:
+        rel_cap_input = min(max_rel, SCALE_DIFF_CAP_REL)
+    else:
+        rel_cap_input = max_rel
 
-    # scale_diff : chaque secteur est étiré (au-delà de 1L) pour que son point
-    # le plus haut arrive au plafond commun rel_cap_input.
-    if scale_diff:
-        for info in lp_info:
-            info["slope"] = _diff_slope(info["sector_max"], rel_cap_input)
-            info["ticks"] = _nice_sector_ticks(info["sector_max"])
+    def is_clipped(info, rel):
+        """True si la valeur relative dépasse le plafond radial (rel_cap)."""
+        return rel is not None and _scale_rel(rel, info["slope"]) > rel_cap
 
     def r_of(info, rel):
         """Rayon tracé d'une valeur relative du secteur info : remise à
-        l'échelle scale_UB/scale_diff (identité sinon) puis radial_power."""
-        return to_r(_scale_rel(rel, info["slope"]))
+        l'échelle scale_UB (identité sinon), tronquée au plafond radial
+        (cercle périphérique), puis radial_power."""
+        return to_r(min(_scale_rel(rel, info["slope"]), rel_cap))
 
     # Le plafond radial est fixé juste au-dessus (RADIAL_AXIS_MARGIN_FRAC) de la
     # valeur relative la plus haute (barre ou seuil UB/LB/DLS affiché), pour que
@@ -614,10 +546,8 @@ def create_radial_synthesis_figure(
     # au L entier supérieur, qui pouvait laisser jusqu'à 1L d'espace mort. Les
     # graduations "NL", elles, restent des multiples entiers (jusqu'au dernier
     # ≤ ce sommet réel).
-    # scale_UB/scale_diff : seules les graduations 1L restent communes à tous
-    # les secteurs (scale_diff trace en plus les graduations propres à chaque
-    # secteur, voir info["ticks"]).
-    rel_ticks = [1] if (scale_UB or scale_diff) else _nice_radial_ticks(rel_cap_input)
+    # scale_UB : seule la graduation 1L reste commune à tous les secteurs.
+    rel_ticks = [1] if scale_UB else _nice_radial_ticks(rel_cap_input)
     rel_cap = rel_cap_input * (1 + RADIAL_AXIS_MARGIN_FRAC)
     r_max_plot = to_r(rel_cap)
     ring_thickness = r_max_plot * 0.11
@@ -656,19 +586,8 @@ def create_radial_synthesis_figure(
     for lp_idx, b in enumerate(geo["boundaries"]):
         ax.plot([b, b], [0, r_ring_end], color="#bdbdbd", linewidth=0.8, zorder=1)
         offset = geo["wedge_span"] * 0.02
-        if scale_diff:
-            # Graduations propres au secteur qui démarre à cette limite : arcs
-            # limités au secteur (au lieu de cercles complets), annotés à son bord.
-            info = lp_info[lp_idx]
-            sector_ticks = [(t, r_of(info, t)) for t in info["ticks"]]
-            theta_arc = np.linspace(b, b + geo["wedge_span"], 60)
-            for t, r in sector_ticks:
-                if t != 1:
-                    ax.plot(theta_arc, np.full_like(theta_arc, r), color="#e0e0e0", linewidth=0.7, zorder=1)
-        else:
-            sector_ticks = [(t, to_r(t)) for t in rel_ticks]
-        for t, r in sector_ticks:
-            ax.text(b + offset, r, _format_tick(t), ha="left", va="center", fontsize=12,
+        for t in rel_ticks:
+            ax.text(b + offset, to_r(t), _format_tick(t), ha="left", va="center", fontsize=12,
                      color="#555555", rotation=_radial_rotation_deg(b), rotation_mode="anchor",
                      bbox=dict(facecolor="white", edgecolor="white", alpha=0.7, pad=0.5), zorder=3)
 
@@ -788,19 +707,17 @@ def create_radial_synthesis_figure(
                         fontsize=12, fontweight="bold", color="#333333",
                         rotation=_tangential_rotation_deg(theta_label), rotation_mode="anchor", zorder=9)
 
-        if info["use_ub_ref"]:
-            # Secteur recalé sur la Upper Safe Bound (voir docstring de
-            # radial_power) : la Upper Safe Bound est désormais le repère "1L"
-            # du secteur (tracée plus bas avec le cercle composite Safe
-            # Limit/Upper Safe Bound), donc seul le Safe Limit (< 1L, toujours
-            # affiché -- ce n'est pas un des 2 "bounds" contrôlés par
-            # display_bounds) reste à afficher ici, positionné relativement à
-            # cette nouvelle référence.
-            if info["lb_rel"] is not None:
-                theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
-                ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, info["lb_rel"])), color=LB_COLOR,
-                        linewidth=3.0, solid_capstyle="butt", zorder=8)
-        elif display_bounds and info["ub_rel"] is not None and info["ub_slope"] is None:
+        # Niveau réel des barres tronquées au plafond radial (ex. "16L"), écrit
+        # au milieu de leur sommet, juste sous le cercle périphérique.
+        for theta, rel in zip(centers, info["rel_values"]):
+            if is_clipped(info, rel):
+                ax.text(theta, r_max_plot * 0.97, _format_tick(round(rel)), ha="center", va="center",
+                        fontsize=12, fontweight="bold", color="black",
+                        rotation=_tangential_rotation_deg(theta), rotation_mode="anchor", zorder=9,
+                        path_effects=[pe.withStroke(linewidth=3, foreground="white")])
+
+        if (display_bounds and info["ub_rel"] is not None and info["ub_slope"] is None
+                and not is_clipped(info, info["ub_rel"])):
             # Secteur remis à l'échelle (scale_UB) : son Upper Safe Bound est
             # tracée plus bas, avec le cercle continu à UB_SCALED_REL.
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
@@ -808,17 +725,25 @@ def create_radial_synthesis_figure(
                     linewidth=3.0, solid_capstyle="butt", zorder=8)
 
         if display_bounds and info["lower_rel"] is not None:
-            # Toujours tracé quand display_bounds=True (que le secteur soit
-            # recalé sur la Upper Safe Bound ou non) : le Lower Safe Bound
-            # reste un repère indépendant, en-deçà du Safe Limit.
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
             ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, info["lower_rel"])), color=LOWER_COLOR,
                     linewidth=3.0, solid_capstyle="butt", zorder=8)
 
-        if info["dls_rel"] is not None:
-            theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
-            ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, info["dls_rel"])), color=DLS_COLOR,
-                    linestyle="--", linewidth=3.0, zorder=8)
+        # Arcs DLS : tout le secteur utile, sauf en mode combiné où ils ne
+        # couvrent que les barres CBA (le DLS est un plancher de consommation,
+        # sans pertinence pour la barre PBA adjacente).
+        if combined:
+            dls_spans = [(theta - bar_width / 2, theta + bar_width / 2) for theta in centers[0::2]]
+        else:
+            dls_spans = [(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"])]
+        for key, _, dls_color, _ in config.DLS_LEVELS:
+            dls_rel = info["dls_rels"][key]
+            if dls_rel is None or is_clipped(info, dls_rel):
+                continue
+            for theta_start, theta_end in dls_spans:
+                theta_arc = np.linspace(theta_start, theta_end, 40)
+                ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, dls_rel)), color=dls_color,
+                        linestyle="--", linewidth=3.0, zorder=8)
 
         bisector = geo["boundaries"][lp_idx] + geo["wedge_span"] / 2
         label = f"{info['name']}\n({info['unit']})" if info["unit"] else info["name"]
@@ -827,20 +752,14 @@ def create_radial_synthesis_figure(
                        rotation=_tangential_rotation_deg(bisector), rotation_mode="anchor", zorder=9)
         txt.set_path_effects([pe.withStroke(linewidth=3, foreground="white")])
 
-    # Cercle "1L" : rayon constant = 1 (point fixe de to_r, quel que soit
-    # radial_power), tracé par-dessus les barres, secteur par secteur (au lieu
-    # d'un unique cercle plein) pour pouvoir varier sa couleur -- vert (Safe
-    # Limit, cas normal) ou rouge (Upper Safe Bound, secteur recalé via use_ub_ref,
-    # voir docstring de radial_power). Les arcs pavent tout wedge_span (pas de
-    # gap) pour rester visuellement un cercle continu quand tous les secteurs
-    # sont dans le même mode.
+    # Cercle Safe Limit "1L" : rayon constant = 1 (point fixe de to_r, quel que
+    # soit radial_power), tracé par-dessus les barres.
+    ax.plot(theta_full, np.full_like(theta_full, to_r(1.0)), color=LB_COLOR, linewidth=3.2, zorder=8)
     for lp_idx, info in enumerate(lp_info):
         theta_arc = np.linspace(geo["boundaries"][lp_idx], geo["boundaries"][lp_idx] + geo["wedge_span"], 40)
-        ring_color = UB_COLOR if info["use_ub_ref"] else LB_COLOR
-        ax.plot(theta_arc, np.full_like(theta_arc, to_r(1.0)), color=ring_color, linewidth=3.2, zorder=8)
         # scale_UB : second cercle concentrique, Upper Safe Bound ramenée à
         # UB_SCALED_REL dans chaque secteur remis à l'échelle -- arcs pavant
-        # tout wedge_span, comme le cercle 1L, pour former un cercle continu.
+        # tout wedge_span pour former un cercle continu.
         if display_bounds and info["ub_slope"] is not None:
             ax.plot(theta_arc, np.full_like(theta_arc, to_r(UB_SCALED_REL)), color=UB_COLOR,
                     linewidth=3.2, zorder=8)
@@ -860,7 +779,9 @@ def create_radial_synthesis_figure(
             Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Safe Bound"),
         ]
     if show_dls:
-        legend_handles.append(Line2D([0], [0], color=DLS_COLOR, linestyle="--", linewidth=3, label="DLS"))
+        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+            if any(info["dls_rels"][key] is not None for info in lp_info):
+                legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3, label=dls_label))
 
     if show_cba and show_categories:
         cat_handles, cat_labels = _build_category_legend(colors.sort_categories(list(legend_categories)))
