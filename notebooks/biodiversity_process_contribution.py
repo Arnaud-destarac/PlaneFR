@@ -30,8 +30,8 @@ SUBPROCESS_NAME = "Biodiversity loss - PDF"
 
 
 def main():
-    facteurs_carac_df = io.load_facteurs_carac()
-    seuils_df = io.load_seuils()
+    facteurs_carac_df = io.load_facteurs_carac(config.SCENARIO_GROUP)
+    seuils_df = io.load_seuils(config.SCENARIO_GROUP)
 
     scenario_folders = config.get_scenario_folders(exclude_2019=True)
     scenario_names = [f.name for f in scenario_folders]

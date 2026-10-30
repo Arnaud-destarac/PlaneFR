@@ -1,0 +1,7 @@
+{
+  "base_year": "2015",
+  "proj_year": "2015",
+  "scenario_name": "Base_year_agri",
+  "extension_name": "dom_raw_materials",
+  "strategy": "use_based"
+}

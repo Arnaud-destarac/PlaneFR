@@ -21,10 +21,23 @@ from . import config
 # ============================================================================
 
 
-def load_facteurs_carac():
+AGRI_GROUP_SUFFIX = "_agri"
+AGRI_SHEET = "Synthèse agri"
+
+
+def is_agri_group(scenario_group):
+    """True si le groupe de scénarios est un groupe agricole ("{scenario}_agri")."""
+    return isinstance(scenario_group, str) and scenario_group.endswith(AGRI_GROUP_SUFFIX)
+
+
+def load_facteurs_carac(scenario_group=None):
     """Facteurs de caractérisation : colonnes Sous-processus, Processus du système
-    Terre (LP), Extensions exiobase, Facteurs de caractérisation."""
-    return pd.read_excel(config.FACTEURS_CARAC_FILE)
+    Terre (LP), Extensions exiobase, Facteurs de caractérisation.
+
+    Si scenario_group se termine par "_agri", lit la feuille "Synthèse agri" au lieu
+    de la première feuille."""
+    sheet = AGRI_SHEET if is_agri_group(scenario_group) else 0
+    return pd.read_excel(config.FACTEURS_CARAC_FILE, sheet_name=sheet)
 
 
 def load_bridge_matrices():
@@ -57,14 +70,16 @@ def load_bridge_m_matrix(sheet_name="M"):
     return (bridge_m > 0).astype(int)
 
 
-def load_seuils():
+def load_seuils(scenario_group=None):
     """Feuille 'Synthèse' de seuils.xlsx : seuils/limites planétaires par sous-processus.
+    Si scenario_group se termine par "_agri", lit la feuille "Synthèse agri" à la place.
 
     Les noms de ligne y sont normalisés (espaces superflus réduits à un seul,
     début/fin retirés) : la feuille contient plusieurs libellés avec des doubles
     espaces ou espaces de fin (ex. "Unit conversion Exiobase  (p.cap)"), qui
     casseraient sinon les lookups par nom exact (cf. planefr_lib.config)."""
-    df = pd.read_excel(config.SEUILS_FILE, sheet_name="Synthèse", index_col=0)
+    sheet = AGRI_SHEET if is_agri_group(scenario_group) else "Synthèse"
+    df = pd.read_excel(config.SEUILS_FILE, sheet_name=sheet, index_col=0)
     df.index = df.index.map(lambda x: re.sub(r"\s+", " ", x).strip() if isinstance(x, str) else x)
     return df
 

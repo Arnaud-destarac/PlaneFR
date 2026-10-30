@@ -1,0 +1,6 @@
+{
+  "base_year": "2015",
+  "proj_year": "2015",
+  "scenario_name": "Base_year_agri",
+  "strategy": "exo_invest_matrix"
+}

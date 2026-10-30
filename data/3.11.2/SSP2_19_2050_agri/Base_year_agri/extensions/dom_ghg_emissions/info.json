@@ -1,0 +1,7 @@
+{
+  "base_year": 2015,
+  "proj_year": "2015",
+  "scenario_name": "Base_year_agri",
+  "extension_name": "dom_ghg_emissions",
+  "strategy": "gross_output_based"
+}
