@@ -12,15 +12,67 @@ plot_overshoot.create_overshoot_safe_space_figure, partagée avec la variante
 par habitant).
 """
 
+import re
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
-from . import colors, config, processing
+from . import colors, config, io, processing
 
 CATEGORY_LEGEND_LABELS = {"F_Y": "Not allocated"}
+
+# sharing_principle="EPC" : quelle colonne ONU de budget_shares.xlsx utiliser.
+#   "region" : comme plot_overshoot.create_overshoot_safe_space_figure_by_region
+#              (« UN – EPC 2019 », « UN – EPC 2019-2100 » pour GHG emissions, et
+#              budgets mondiaux GHG lus dans la colonne "GHG emissions (2019)").
+#   "radial" : comme plot_radial_synthesis.create_radial_synthesis_figure
+#              (« UN – EPC 2050 », « UN – EPC 2019-2100 » pour GHG emissions).
+EPC_REFERENCES = ("region", "radial")
+
+
+def _check_epc_columns(shares_df, epc_reference):
+    """Vérifie que budget_shares.xlsx contient les colonnes « UN – EPC »
+    nécessaires à epc_reference (voir EPC_REFERENCES)."""
+    if epc_reference == "region":
+        patterns = {config.REGION_FIGURE_EPC_REF_PATTERN,
+                    *config.REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS.values()}
+    elif epc_reference == "radial":
+        patterns = {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_SUBPROCESS.values()}
+    else:
+        raise ValueError(f"epc_reference inconnu : {epc_reference!r} (attendu : {', '.join(EPC_REFERENCES)})")
+    for pattern in patterns:
+        if not any(re.search(pattern, str(c), flags=re.IGNORECASE) for c in shares_df.columns):
+            raise ValueError(
+                f"Aucune colonne de shares_df ne correspond à {pattern!r} : régénérer "
+                f"budget_shares.xlsx (colonnes « UN – EPC »)."
+            )
+
+
+def _epc_threshold(seuils_df, shares_df, subprocess_name, threshold_kind, epc_reference,
+                   use_2019_seuils=False):
+    """Budget France (valeurs absolues) = budget mondial x part ONU EPC de la
+    ligne config.RADIAL_EPC_REGION_CODE ("FR"), selon epc_reference.
+
+    use_2019_seuils (epc_reference="region" seulement) : True pour lire les
+    budgets mondiaux dans la colonne 2019 de seuils.xlsx quand elle existe
+    (ex. GHG emissions -> "GHG emissions (2019)", cf.
+    config.region_figure_seuil_column) ; False pour garder la colonne du
+    sous-processus ("GHG emissions").
+    """
+    if epc_reference == "region":
+        seuil_column = (config.region_figure_seuil_column(subprocess_name)
+                        if use_2019_seuils else subprocess_name)
+        column_pattern = config.region_figure_epc_ref_pattern(subprocess_name)
+    else:
+        seuil_column = subprocess_name
+        column_pattern = config.radial_epc_pattern(subprocess_name)
+    return processing.compute_region_budget(
+        seuils_df, shares_df, seuil_column, config.RADIAL_EPC_REGION_CODE, "EPC",
+        threshold_kind=threshold_kind, column_pattern=column_pattern,
+    )
 
 
 def _build_category_legend(categories):
@@ -42,7 +94,8 @@ def _build_category_legend(categories):
 
 def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                               scenario_name="", reference_data=None, ax=None, show_legend=True,
-                              group_by_category=True, sharing_principle=None, pop_df=None):
+                              group_by_category=True, sharing_principle=None, pop_df=None,
+                              shares_df=None, epc_reference="region", use_2019_seuils=None):
     """Barres empilées en % représentant les LP par sous-processus : dom (plein) +
     imp (hachuré) empilés par catégorie de consommation. Annote le total absolu,
     la variation relative au scénario de référence (si fourni), et le dépassement
@@ -63,12 +116,34 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
             budget mondial pour la période de référence associée (voir
             config.SHARING_PRINCIPLE_POPULATION_ROW et processing.compute_sharing_seuil),
             au lieu d'être lu statiquement dans seuils_df. Nécessite pop_df.
+            "EPC" : budget France = budget mondial ("Safe limit") x part ONU de
+            la ligne "FR" de budget_shares.xlsx, colonne choisie par epc_reference.
         pop_df: feuille "Population" de seuils.xlsx (io.load_population_df) -- requis
-            seulement si sharing_principle est fourni.
+            seulement si sharing_principle est un principe "Equality ...".
+        shares_df: budget_shares.xlsx (io.load_budget_shares_df) -- utilisé si
+            sharing_principle="EPC" ; chargé automatiquement si None.
+        epc_reference: "region" (défaut) = mêmes limites que
+            create_overshoot_safe_space_figure_by_region (« UN – EPC 2019 », sauf
+            GHG emissions : « UN – EPC 2019-2100 » sur le budget "GHG emissions
+            (2019)") ; "radial" = mêmes limites que create_radial_synthesis_figure
+            (« UN – EPC 2050 », sauf GHG emissions : « UN – EPC 2019-2100 »).
+        use_2019_seuils: avec epc_reference="region", True pour prendre les
+            budgets mondiaux de "GHG emissions (2019)" au lieu de "GHG
+            emissions" (comme la figure par région, qui ne montre que des
+            scénarios 2019) ; False pour garder "GHG emissions". None (défaut) :
+            True si scenario_name contient "2019" (ex. "2019_FR"), False sinon.
 
     Returns:
         (fig, ax) si ax=None a été fourni en entrée, sinon (None, ax).
     """
+    if use_2019_seuils is None:
+        use_2019_seuils = "2019" in str(scenario_name)
+    is_epc = sharing_principle == "EPC"
+    if is_epc:
+        if shares_df is None:
+            shares_df = io.load_budget_shares_df()
+        _check_epc_columns(shares_df, epc_reference)
+
     subprocesses = list(data_by_subprocess.keys())
     n_subprocesses = len(subprocesses)
 
@@ -134,9 +209,13 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
                 ax.text(idx, 97, text_var, ha="center", va="bottom", fontweight="bold", fontsize=11, color="black")
 
-        threshold = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, sp,
-                                                 pop_df=pop_df, sharing_principle=sharing_principle)
-        if threshold is not None:
+        if is_epc:
+            threshold = _epc_threshold(seuils_df, shares_df, sp, "lb", epc_reference,
+                                       use_2019_seuils=use_2019_seuils)
+        else:
+            threshold = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, sp,
+                                                     pop_df=pop_df, sharing_principle=sharing_principle)
+        if threshold:
             overshoot_pct = total_val / threshold
             color = "red" if overshoot_pct > 1 else "lightgreen"
             y_pos = 95 if reference_data is not None else 98
@@ -164,17 +243,24 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
 
 def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
-                             group_by_category=True, sharing_principle=None, pop_df=None):
+                             group_by_category=True, sharing_principle=None, pop_df=None,
+                             shares_df=None):
     """Grille de create_stacked_bar_chart pour tous les scénarios (2 colonnes,
     autant de lignes que nécessaire), avec légende et titre communs.
 
     Args:
         group_by_category: voir create_stacked_bar_chart
-        sharing_principle, pop_df: voir create_stacked_bar_chart
+        sharing_principle, pop_df, shares_df: voir create_stacked_bar_chart.
+            Avec sharing_principle="EPC", les limites sont celles de
+            create_radial_synthesis_figure (« UN – EPC 2050 », sauf GHG
+            emissions : « UN – EPC 2019-2100 ») -- epc_reference="radial".
 
     Returns:
         (fig, axes_list)
     """
+    if sharing_principle == "EPC" and shares_df is None:
+        shares_df = io.load_budget_shares_df()
+
     n_scenarios = len(all_scenarios_data)
     n_cols = 2 if n_scenarios > 1 else 1
     n_rows = int(np.ceil(n_scenarios / n_cols))
@@ -199,6 +285,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
             reference_data=None if is_reference else reference_data,
             ax=ax, show_legend=False, group_by_category=group_by_category,
             sharing_principle=sharing_principle, pop_df=pop_df,
+            shares_df=shares_df, epc_reference="radial",
         )
 
     all_categories = set()
@@ -225,7 +312,8 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                                    dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
                                    show_values=True, show_thresholds=True, display_bounds=True,
                                    show_variation_bars=False,
-                                   sharing_principle=None, pop_df=None, scenario_group=None):
+                                   sharing_principle=None, pop_df=None, scenario_group=None,
+                                   shares_df=None, epc_reference="radial"):
     """Figure de synthèse alternative : 7 LP en grille 3x3 (1 barre par scénario,
     1 subplot par LP), valeurs absolues (non normalisées). Affiche le plafond
     environnemental (Safe Limit, Upper Safe Bound) et le plancher social (DLS)
@@ -271,10 +359,26 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             descendent, pour voir où se situe le solde net).
         sharing_principle, pop_df: voir create_stacked_bar_chart -- s'appliquent
             ici à threshold_lower, threshold_lb ET threshold_ub.
+        shares_df, epc_reference: voir create_stacked_bar_chart (utilisés si
+            sharing_principle="EPC"). Par défaut ici epc_reference="radial" :
+            mêmes limites que create_radial_synthesis_figure (« UN – EPC
+            2050 », sauf GHG emissions : « UN – EPC 2019-2100 »).
 
     Returns:
         (fig, axes_list)
     """
+    is_epc = sharing_principle == "EPC"
+    if is_epc:
+        if shares_df is None:
+            shares_df = io.load_budget_shares_df()
+        _check_epc_columns(shares_df, epc_reference)
+
+    def threshold(threshold_row, threshold_kind, subprocess_name):
+        if is_epc:
+            return _epc_threshold(seuils_df, shares_df, subprocess_name, threshold_kind, epc_reference)
+        return processing.lookup_threshold(seuils_df, threshold_row, subprocess_name,
+                                           pop_df=pop_df, sharing_principle=sharing_principle)
+
     reference_idx = config.REFERENCE_SCENARIO_IDX
     # Le scénario de référence (base_year) garde sa position, suivi du
     # tendanciel, puis des autres scénarios par ordre décroissant de variation
@@ -418,18 +522,15 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             pba_values = [None] * n_scenarios
             max_pba = 0.0
 
-        threshold_lb = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name,
-                                                    pop_df=pop_df, sharing_principle=sharing_principle)
-        threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
-                                                    pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", subprocess_name)
+        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", subprocess_name)
         # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
         dls_values = {key: None for key, _, _, _ in config.DLS_LEVELS}
         if show_dls and dls_df is not None:
             dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
             for key, suffix, _, _ in config.DLS_LEVELS:
                 dls_values[key] = processing.lookup_dls(dls_df, dls_prefix + suffix, subprocess_name)
-        threshold_lower = processing.lookup_threshold(seuils_df, config.THRESHOLD_LOWER_ABS, subprocess_name,
-                                                        pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
 
         if not show_thresholds:
             # Masque tous les traits de seuil (Lower Safe Bound/Safe Limit/

@@ -36,6 +36,7 @@ SEUILS_FILE = DATA_DIR / "seuils.xlsx"
 BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
 # Pressions (empreinte CBA) ventilées par catégorie de ménages (enquête Budget
 # de famille) : 1 feuille par ventilation ("décile", "unité urbaine", "croisé").
+# Nom de base : le fichier lu est impacts_facteurs_agrégé_{groupe}*.xlsx (io.bdf_file).
 BDF_FILE = PROJECT_DIR.parent / "Github" / "ademe_eemrio" / "impacts_facteurs_agrégé.xlsx"
 BDF_WEIGHT_COL = "weight"
 BDF_TOTAL_ROW = "Total"
@@ -205,7 +206,7 @@ WORLD_CONVERSION_ROW_PER_CAPITA = "Unit conversion budget (p. cap)"
 # plot_overshoot.create_overshoot_safe_space_figure_by_region (figure en valeurs
 # absolues, donc conversions _ABS : WORLD_CONVERSION_ROW_ABS / CONVERSION_ROW_ABS).
 
-BUDGET_SHARES_SHEET = "Parts_regions_EXIOBASE"
+BUDGET_SHARES_SHEET = "Budget_shares_regions"
 
 # La feuille commence par un titre et deux lignes de notes : la vraie ligne
 # d'en-têtes ("Code EXIOBASE", "Région", "Part EPC ref. ...") est la 4e.
@@ -225,6 +226,68 @@ BUDGET_SHARE_COLUMN_PATTERNS = {
     "EPC": {"ref": r"^Part\s+EPC\s+ref", "min": r"^EPC\s+min$", "max": r"^EPC\s+max$"},
     "CTR": {"ref": r"^Part\s+CTR\s+ref", "min": r"^CTR\s+min$", "max": r"^CTR\s+max$"},
 }
+
+# Feuille détaillée de budget_shares.xlsx, dont io.load_budget_shares_df ajoute
+# les colonnes « UN – EPC <période> » (parts EPC calculées sur la population ONU,
+# WPP 2024) à celles de BUDGET_SHARES_SHEET.
+BUDGET_SHARES_VARIANTS_SHEET = "Budget_shares_variantes"
+UN_SHARE_COLUMN_PATTERN = r"^UN\W+EPC\b"
+
+# EPC de référence de plot_overshoot.create_overshoot_safe_space_figure_by_region :
+# colonne ONU (motif regex) utilisée par défaut, et exceptions par sous-processus
+# (nom de colonne de seuils.xlsx/"Synthèse", comparé sans tenir compte de la casse).
+# Remplace la colonne "Part EPC ref. ..." pour la référence uniquement : les
+# bornes de sensibilité restent "EPC min" / "EPC max".
+REGION_FIGURE_EPC_REF_PATTERN = r"^UN\W+EPC\s+2019$"
+REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS = {
+    "GHG emissions": r"^UN\W+EPC\s+2019-2100$",
+    "GHG emissions (2019)": r"^UN\W+EPC\s+2019-2100$",
+}
+
+# Colonne de seuils.xlsx/"Synthèse" fournissant les budgets mondiaux (Lower /
+# Safe limit / Upper) d'un sous-processus dans cette même figure, quand elle
+# diffère du nom du sous-processus. Les empreintes et l'unité affichée restent
+# celles du sous-processus d'origine.
+REGION_FIGURE_SEUIL_COLUMN_BY_SUBPROCESS = {
+    "GHG emissions": "GHG emissions (2019)",
+}
+
+
+def _lookup_ci(mapping, subprocess_name, default):
+    key = str(subprocess_name).strip().casefold()
+    for name, value in mapping.items():
+        if name.casefold() == key:
+            return value
+    return default
+
+
+def region_figure_epc_ref_pattern(subprocess_name):
+    """Motif de la colonne EPC de référence pour `subprocess_name` (voir ci-dessus)."""
+    return _lookup_ci(REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS, subprocess_name,
+                      REGION_FIGURE_EPC_REF_PATTERN)
+
+
+# sharing_principle="EPC" de plot_radial_synthesis.create_radial_synthesis_figure :
+# budget France = budget mondial x part de la ligne RADIAL_EPC_REGION_CODE de
+# budget_shares.xlsx, lue dans la colonne ONU ci-dessous (motif regex), avec
+# exceptions par sous-processus (comparées sans tenir compte de la casse).
+RADIAL_EPC_REGION_CODE = "FR"
+RADIAL_EPC_PATTERN = r"^UN\W+EPC\s+2050$"
+RADIAL_EPC_PATTERN_BY_SUBPROCESS = {
+    "GHG emissions": r"^UN\W+EPC\s+2019-2100$",
+    "GHG emissions (2019)": r"^UN\W+EPC\s+2019-2100$",
+}
+
+
+def radial_epc_pattern(subprocess_name):
+    """Motif de la colonne EPC utilisée par la figure radiale pour `subprocess_name`."""
+    return _lookup_ci(RADIAL_EPC_PATTERN_BY_SUBPROCESS, subprocess_name, RADIAL_EPC_PATTERN)
+
+
+def region_figure_seuil_column(subprocess_name):
+    """Colonne de seuils.xlsx portant les budgets de `subprocess_name` dans
+    create_overshoot_safe_space_figure_by_region (voir ci-dessus)."""
+    return _lookup_ci(REGION_FIGURE_SEUIL_COLUMN_BY_SUBPROCESS, subprocess_name, subprocess_name)
 
 # Code région du Monde dans budget_shares.xlsx. Sa part vaut 1 sans encadrement
 # min/max : sa sensibilité est calculée par habitant, en faisant varier la période
@@ -285,6 +348,10 @@ DLS_UPPER_COLOR = "#0077b6"
 # feuille DLS ; pour tout autre groupe (scénarios 2050), sur "DLS 2050 ...".
 DLS_BASE_YEAR_GROUP = "Base_year"
 
+# Figure radiale Bdf avec comparaison de 2 scénarios : DLS central de l'année de
+# base (DLS_COLOR) et DLS 2050, dans un bleu un peu plus sombre.
+DLS_2050_COLOR = "#0096c7"
+
 # (clé, suffixe de ligne dans la feuille DLS, couleur, libellé de légende)
 DLS_LEVELS = (
     ("dls_lower", " lower bound", DLS_LOWER_COLOR, "DLS lower bound"),
@@ -292,10 +359,13 @@ DLS_LEVELS = (
     ("dls_upper", " upper bound", DLS_UPPER_COLOR, "DLS upper bound"),
 )
 
-# Repère (insensible à la casse) du scénario tendanciel dans les noms de
-# dossier ("TEND_2050", "TEND") : placé juste à côté de la référence dans les
-# figures qui trient les scénarios (processing.sort_scenarios_by_reduction).
+# Nom (insensible à la casse) du scénario tendanciel : "TEND" ou "TEND_2050".
+# Placé juste à côté de la référence dans les figures qui trient les scénarios
+# (processing.sort_scenarios_by_reduction). Correspondance sur le nom ENTIER :
+# les variantes ("S1-TEND", "TEND-TEND", "TEND_Sus"...) sont triées avec les
+# autres scénarios.
 TREND_SCENARIO_MARKER = "TEND"
+TREND_SCENARIO_PATTERN = rf"^{TREND_SCENARIO_MARKER}(_\d{{4}})?$"
 
 # ============================================================================
 # FIGURE OVERSHOOT / SAFE OPERATING SPACE

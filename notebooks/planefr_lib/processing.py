@@ -245,13 +245,14 @@ def mean_variation(scenario_data, reference_data, value_keys):
 
 def sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys):
     """Ordre d'affichage (indices) : référence en premier, puis le tendanciel
-    (nom contenant config.TREND_SCENARIO_MARKER), puis les autres scénarios par
+    (nom = config.TREND_SCENARIO_PATTERN), puis les autres scénarios par
     variation moyenne décroissante (mean_variation) : la plus faible baisse /
     plus forte hausse juste à côté du tendanciel, la plus forte baisse le plus
     loin."""
     reference_data = all_scenarios_data[reference_idx]
     others = [i for i in range(len(scenario_names)) if i != reference_idx]
-    trend = [i for i in others if config.TREND_SCENARIO_MARKER in scenario_names[i].upper()]
+    trend = [i for i in others
+             if re.match(config.TREND_SCENARIO_PATTERN, scenario_names[i].strip(), re.IGNORECASE)]
     rest = [i for i in others if i not in trend]
 
     def sort_key(i):
@@ -348,11 +349,19 @@ def find_share_column(shares_df, sharing_principle, variant):
     return None
 
 
-def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref"):
+def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref",
+                        column_pattern=None):
     """Part du budget mondial revenant à `region_code`, en float, ou None si elle
     est absente/non calculable (colonne introuvable, code région inconnu, "n.d."
-    ou cellule vide — cf. io.load_budget_shares_df)."""
-    column = find_share_column(shares_df, sharing_principle, variant)
+    ou cellule vide — cf. io.load_budget_shares_df).
+
+    column_pattern: motif regex désignant directement la colonne à lire, au lieu
+    de celle déduite de (sharing_principle, variant)."""
+    if column_pattern is not None:
+        column = next((c for c in shares_df.columns
+                       if re.search(column_pattern, str(c), flags=re.IGNORECASE)), None)
+    else:
+        column = find_share_column(shares_df, sharing_principle, variant)
     if column is None or region_code not in shares_df.index:
         return None
     value = shares_df.loc[region_code, column]
@@ -365,7 +374,8 @@ def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref"
 
 
 def compute_region_budget(seuils_df, shares_df, subprocess_name, region_code,
-                          sharing_principle, variant="ref", threshold_kind="lb"):
+                          sharing_principle, variant="ref", threshold_kind="lb",
+                          column_pattern=None):
     """Budget LOWER/LB/UB d'un pays/région, en valeurs absolues, obtenu en
     appliquant au budget mondial la part de `region_code` lue dans shares_df.
 
@@ -380,6 +390,8 @@ def compute_region_budget(seuils_df, shares_df, subprocess_name, region_code,
     Args:
         threshold_kind: "lower", "lb" ou "ub".
         variant: "ref", "min" ou "max" (voir find_share_column).
+        column_pattern: motif regex de la colonne de part à lire, prioritaire
+            sur (sharing_principle, variant) — voir lookup_budget_share.
 
     Returns:
         float, ou None si une donnée nécessaire est absente (budget mondial non
@@ -391,7 +403,7 @@ def compute_region_budget(seuils_df, shares_df, subprocess_name, region_code,
     world_budget = lookup_seuil(seuils_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
                                 subprocess_name, require_positive=True)
     world_conversion = lookup_seuil(seuils_df, config.WORLD_CONVERSION_ROW_ABS, subprocess_name)
-    share = lookup_budget_share(shares_df, region_code, sharing_principle, variant)
+    share = lookup_budget_share(shares_df, region_code, sharing_principle, variant, column_pattern)
     if world_budget is None or not world_conversion or share is None:
         return None
 

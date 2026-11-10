@@ -95,12 +95,67 @@ def load_population_df():
     return pd.read_excel(config.SEUILS_FILE, sheet_name="Population", index_col=0)
 
 
-def load_bdf(sheet_name="décile"):
-    """Feuille sheet_name de impacts_facteurs_agrégé.xlsx (config.BDF_FILE) :
-    1 ligne par catégorie de ménages (+ une ligne config.BDF_TOTAL_ROW), indexée
-    par la 1re colonne ; colonne config.BDF_WEIGHT_COL (part de la population)
-    puis 1 colonne par sous-processus, nommée "<sous-processus> (<unité>)"."""
-    df = pd.read_excel(config.BDF_FILE, sheet_name=sheet_name, index_col=0)
+def bdf_file(scenario_group=None):
+    """Fichier impacts_facteurs_agrégé_{scenario_group}*.xlsx produit par BdF.ps1
+    (ex. groupe "Base_year" -> impacts_facteurs_agrégé_Base_year_2019_FR.xlsx).
+    scenario_group None = config.SCENARIO_GROUP. Un seul fichier doit correspondre."""
+    if scenario_group is None:
+        scenario_group = config.SCENARIO_GROUP
+    base = config.BDF_FILE
+    exact = base.with_name(f"{base.stem}_{scenario_group}{base.suffix}")
+    if exact.is_file():
+        return exact
+    matches = sorted(base.parent.glob(f"{base.stem}_{scenario_group}_*{base.suffix}"))
+    if len(matches) != 1:
+        found = [p.name for p in matches] or "aucun"
+        raise FileNotFoundError(
+            f"Fichier BdF du groupe '{scenario_group}' introuvable ou ambigu dans {base.parent} "
+            f"(attendu : {base.stem}_{scenario_group}[_...]{base.suffix} ; trouvé : {found})")
+    return matches[0]
+
+
+def _is_base_year_scenario(scenario_name):
+    """Dossier de scénario "année de base" (2019_FR, Base_year_2015...)."""
+    return "2019" in scenario_name or scenario_name.startswith("Base_year")
+
+
+def bdf_comparison_file(scenario_group=None):
+    """Fichier BdF du scénario de comparaison d'un groupe à 2 scénarios (ex. groupe
+    "S1+" = 2019_FR + S1_2050) : le scénario "année de base" du groupe, lu dans
+    impacts_facteurs_agrégé_{groupe}_{scénario}.xlsx s'il existe, sinon dans le
+    fichier du groupe config.DLS_BASE_YEAR_GROUP (impacts_facteurs_agrégé_Base_year*.xlsx).
+    Le fichier du groupe lui-même (bdf_file) porte l'autre scénario (ex. S1_2050).
+
+    Returns:
+        Path, ou None si le groupe ne contient qu'un scénario (ou est lui-même
+        le groupe année de base).
+    """
+    if scenario_group is None:
+        scenario_group = config.SCENARIO_GROUP
+    group_dir = config.BASE_DATA_DIR / scenario_group
+    if not scenario_group or scenario_group == config.DLS_BASE_YEAR_GROUP or not group_dir.is_dir():
+        return None
+    scenarios = sorted(d.name for d in group_dir.iterdir() if config._is_scenario_folder(d))
+    if len(scenarios) < 2:
+        return None
+    base = [s for s in scenarios if _is_base_year_scenario(s)]
+    if len(scenarios) != 2 or len(base) != 1:
+        raise ValueError(
+            f"Comparaison BdF : le groupe '{scenario_group}' doit contenir exactement 2 scénarios "
+            f"dont 1 année de base (trouvé : {scenarios})")
+    stem, suffix = config.BDF_FILE.stem, config.BDF_FILE.suffix
+    specific = config.BDF_FILE.with_name(f"{stem}_{scenario_group}_{base[0]}{suffix}")
+    return specific if specific.is_file() else bdf_file(config.DLS_BASE_YEAR_GROUP)
+
+
+def load_bdf(sheet_name="décile", scenario_group=None, path=None):
+    """Feuille sheet_name de impacts_facteurs_agrégé_{scenario_group}*.xlsx
+    (voir bdf_file) : 1 ligne par catégorie de ménages (+ une ligne
+    config.BDF_TOTAL_ROW), indexée par la 1re colonne ; colonne
+    config.BDF_WEIGHT_COL (part de la population) puis 1 colonne par
+    sous-processus, nommée "<sous-processus> (<unité>)". path : fichier à lire
+    à la place de bdf_file(scenario_group) (ex. bdf_comparison_file)."""
+    df = pd.read_excel(path or bdf_file(scenario_group), sheet_name=sheet_name, index_col=0)
     df.index = df.index.map(str)
     return df
 
@@ -117,11 +172,27 @@ def load_budget_shares_df():
     et les parts sont converties en numérique : la feuille note "n.d." les
     parts non calculables (Taïwan, absent des données Banque mondiale) et laisse
     vides les min/max qui n'ont pas de sens (ligne "W"), qui deviennent donc NaN."""
-    df = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=config.BUDGET_SHARES_SHEET,
-                       header=config.BUDGET_SHARES_HEADER_ROW)
-    df = df[df[config.BUDGET_SHARE_CODE_COLUMN].notna() & df["Région"].notna()]
-    df = df.set_index(config.BUDGET_SHARE_CODE_COLUMN)
-    df.index = df.index.map(lambda x: str(x).strip())
+    def read(sheet):
+        d = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=sheet,
+                          header=config.BUDGET_SHARES_HEADER_ROW)
+        d = d[d[config.BUDGET_SHARE_CODE_COLUMN].notna() & d["Région"].notna()]
+        d = d.set_index(config.BUDGET_SHARE_CODE_COLUMN)
+        d.index = d.index.map(lambda x: str(x).strip())
+        return d
+
+    df = read(config.BUDGET_SHARES_SHEET)
+
+    # Colonnes « UN – EPC <période> » de la feuille détaillée. Cette feuille n'a
+    # pas de ligne Monde : la part de W y vaut 1 par construction.
+    xls = pd.ExcelFile(config.BUDGET_SHARES_FILE)
+    if config.BUDGET_SHARES_VARIANTS_SHEET in xls.sheet_names:
+        variants = read(config.BUDGET_SHARES_VARIANTS_SHEET)
+        un_columns = [c for c in variants.columns
+                      if re.search(config.UN_SHARE_COLUMN_PATTERN, str(c), flags=re.IGNORECASE)]
+        df = df.join(variants[un_columns])
+        if config.WORLD_REGION_CODE in df.index:
+            df.loc[config.WORLD_REGION_CODE, un_columns] = 1.0
+
     share_columns = [c for c in df.columns if c != "Région"]
     df[share_columns] = df[share_columns].apply(pd.to_numeric, errors="coerce")
     return df

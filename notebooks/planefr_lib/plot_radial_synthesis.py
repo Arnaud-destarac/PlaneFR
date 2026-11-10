@@ -41,6 +41,8 @@ material consumption / Blue water consumption), le nom du scénario est en
 plus rappelé au-dessus de chaque case de la bande extérieure.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -60,6 +62,7 @@ LP_COLORS = {
     "P surplus":                 "#6D4C41",  
     "Blue water consumption":    "#096DB4",  
     "Agricultural land":               "#3B5A17", 
+    "Cropland use":         "#68BB09",
     "GHG emissions":              "#F57C00",
     "Biodiversity loss - PDF":          "#B12BB1",
     "Biodiversity loss - HANPP":          "#FC85FC", 
@@ -70,6 +73,10 @@ _FALLBACK_LP_COLOR = "#4c78a8"
 LB_COLOR = "#0d9a33"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Safe Limit")
 UB_COLOR = "#bc270a"    # identique à plot_stacked_bar.py / plot_overshoot.py ("Upper Safe Bound")
 LOWER_COLOR = config.LOWER_SAFE_BOUND_COLOR  # identique à plot_stacked_bar.py / plot_overshoot.py ("Lower Safe Bound")
+
+# Bdf avec comparaison (groupe à 2 scénarios) : contour de l'écart à l'année de base
+COMPARISON_EDGE_COLOR = "black"
+COMPARISON_EDGE_WIDTH = 0.3
 
 # Un fort dépassement (ex. GHG emissions à ~16L) écraserait l'échelle radiale
 # de tous les secteurs : avec scale_diff=True, le plafond radial est borné à
@@ -310,7 +317,7 @@ def create_radial_synthesis_figure(
     display_bounds=True,
     title=None,
     figsize=(16, 16),
-    sharing_principle=None, pop_df=None,
+    sharing_principle=None, pop_df=None, shares_df=None,
     scale_UB=False, scale_diff=False,
     scenario_group=None,
     Bdf=None,
@@ -403,8 +410,15 @@ def create_radial_synthesis_figure(
             référence associée (voir config.SHARING_PRINCIPLE_POPULATION_ROW et
             processing.compute_sharing_seuil), au lieu d'être lus statiquement
             dans seuils_df. Nécessite pop_df.
+            "EPC" : budget France = budget mondial ("Lower safe bound"/"Safe
+            limit"/"Upper safe bound") x part de la ligne "FR" de
+            budget_shares.xlsx, colonne "UN – EPC 2050" ("UN – EPC
+            2019-2100" pour GHG emissions) -- voir config.radial_epc_pattern.
+            pop_df n'est alors pas utilisé.
         pop_df: feuille "Population" de seuils.xlsx (io.load_population_df) --
-            requis seulement si sharing_principle est fourni.
+            requis seulement pour les principes "Equality ...".
+        shares_df: parts de budget_shares.xlsx (io.load_budget_shares_df),
+            utilisé si sharing_principle="EPC" ; chargé automatiquement si None.
         scale_UB: si False (défaut), échelle commune à tous les secteurs, en
             multiples de la Safe Limit (1L, 2L, 3L...). Si True (même principe
             que plot_overshoot.create_overshoot_safe_space_figure_by_region),
@@ -424,7 +438,8 @@ def create_radial_synthesis_figure(
             jusqu'au cercle périphérique et leur niveau réel (ex. "16L") est
             écrit juste en dessous (voir r_max). Incompatible avec scale_UB.
         Bdf: None (défaut) = figure multi-scénarios classique. Sinon, nom d'une
-            feuille de config.BDF_FILE (ex. "décile") : les scénarios sont
+            feuille (ex. "décile") du fichier BdF du groupe scenario_group
+            (io.bdf_file : impacts_facteurs_agrégé_{scenario_group}*.xlsx) : les scénarios sont
             remplacés par la valeur agrégée (ligne "Total", en 1re position,
             nuance pleine) puis les catégories de ménages de la 1re colonne de
             cette feuille (nuance claire), 1 barre pleine chacune, de
@@ -439,6 +454,16 @@ def create_radial_synthesis_figure(
             show_categories/show_import_split et le tri des scénarios sont
             ignorés ; all_scenarios_data ne sert qu'à fixer la liste/l'ordre
             des LP (scénario de référence).
+            Si le dossier du groupe scenario_group contient 2 scénarios dont
+            une année de base (ex. "S1+" = 2019_FR + S1_2050, voir
+            io.bdf_comparison_file), les barres (fichier du groupe) restent
+            inchangées et l'écart à l'année de base (fichier Base_year) est
+            ajouté sur chacune : bout de barre blanc à contour noir fin
+            jusqu'à la valeur de l'année de base si elle est plus haute,
+            contour seul sur le haut de la barre si elle est plus basse
+            (légende "Base year"). show_dls trace alors le DLS central de
+            l'année de base ("DLS Base year") et le DLS 2050 (bleu plus
+            sombre) au lieu des 3 niveaux DLS. False équivaut à None.
 
     Returns:
         (fig, ax)
@@ -447,7 +472,7 @@ def create_radial_synthesis_figure(
         raise ValueError("show_cba et show_pba ne peuvent pas être tous les deux False.")
     if scale_UB and scale_diff:
         raise ValueError("scale_UB et scale_diff ne peuvent pas être tous les deux True.")
-    is_bdf = Bdf is not None
+    is_bdf = Bdf not in (None, False)
     if is_bdf:
         show_cba, show_pba = True, False
     combined = show_cba and show_pba
@@ -467,15 +492,39 @@ def create_radial_synthesis_figure(
     first_scenario_data = all_scenarios_data[reference_idx]
     subprocesses = list(first_scenario_data.keys())
 
+    comp_df = None
     if is_bdf:
         # Les "scénarios" deviennent la valeur agrégée (ligne "Total", en
         # 1re position = référence) suivie des catégories de ménages.
-        bdf_df = io.load_bdf(Bdf)
+        bdf_df = io.load_bdf(Bdf, scenario_group)
         bdf_df = pd.concat([bdf_df.loc[[config.BDF_TOTAL_ROW]],
                             bdf_df.drop(index=config.BDF_TOTAL_ROW)])
         bdf_weights = bdf_df[config.BDF_WEIGHT_COL].astype(float).tolist()
         scenario_names = list(bdf_df.index)
         reference_idx = 0
+        # Groupe à 2 scénarios (ex. S1+ = 2019_FR + S1_2050) : mêmes catégories
+        # lues dans le fichier BdF de l'année de base, pour tracer la différence.
+        comparison_path = io.bdf_comparison_file(scenario_group)
+        comp_df = None
+        if comparison_path is not None:
+            comp_df = io.load_bdf(Bdf, path=comparison_path)
+            missing = [c for c in scenario_names if c not in comp_df.index]
+            if missing:
+                raise ValueError(f"Catégories absentes de {comparison_path.name} : {missing}")
+            comp_df = comp_df.loc[scenario_names]
+            comp_weights = comp_df[config.BDF_WEIGHT_COL].astype(float).tolist()
+    bdf_compare = is_bdf and comp_df is not None
+
+    # Niveaux DLS tracés : (clé, ligne de la feuille DLS, couleur, libellé).
+    # Comparaison Bdf : DLS central de l'année de base et DLS 2050 ; sinon les 3
+    # niveaux de config.DLS_LEVELS, lignes "DLS ..." (groupe année de base) ou
+    # "DLS 2050 ...".
+    if bdf_compare:
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year"),
+                      ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050")]
+    else:
+        dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
+        dls_levels = [(key, dls_prefix + suffix, color, label) for key, suffix, color, label in config.DLS_LEVELS]
 
     n_lp = len(subprocesses)
     n_scenarios = len(scenario_names)
@@ -498,20 +547,39 @@ def create_radial_synthesis_figure(
     lp_info = []
     legend_categories = set()
     max_rel = 1.0
+    is_epc = sharing_principle == "EPC"
+    if is_epc:
+        if shares_df is None:
+            shares_df = io.load_budget_shares_df()
+        for pattern in {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_SUBPROCESS.values()}:
+            if not any(re.search(pattern, str(c), flags=re.IGNORECASE) for c in shares_df.columns):
+                raise ValueError(
+                    f"Aucune colonne de shares_df ne correspond à {pattern!r} : régénérer "
+                    f"budget_shares.xlsx (colonnes « UN – EPC »)."
+                )
+
+    def threshold(threshold_row, threshold_kind, subprocess_name):
+        if is_epc:
+            # Budget France = budget mondial x part ONU (« UN – EPC 2050 »,
+            # ou 2019-2100 pour GHG) : cf. config.radial_epc_pattern.
+            return processing.compute_region_budget(
+                seuils_df, shares_df, subprocess_name, config.RADIAL_EPC_REGION_CODE, "EPC",
+                threshold_kind=threshold_kind,
+                column_pattern=config.radial_epc_pattern(subprocess_name),
+            )
+        return processing.lookup_threshold(seuils_df, threshold_row, subprocess_name,
+                                           pop_df=pop_df, sharing_principle=sharing_principle)
+
     for subprocess_name in subprocesses:
-        threshold_lb = processing.lookup_threshold(seuils_df, config.THRESHOLD_LB_ABS, subprocess_name,
-                                                    pop_df=pop_df, sharing_principle=sharing_principle)
-        threshold_ub = processing.lookup_threshold(seuils_df, config.THRESHOLD_UB_ABS, subprocess_name,
-                                                    pop_df=pop_df, sharing_principle=sharing_principle)
-        threshold_lower = processing.lookup_threshold(seuils_df, config.THRESHOLD_LOWER_ABS, subprocess_name,
-                                                        pop_df=pop_df, sharing_principle=sharing_principle)
+        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", subprocess_name)
+        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", subprocess_name)
+        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
         unit_text = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, subprocess_name)
         # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
-        dls_values = {key: None for key, _, _, _ in config.DLS_LEVELS}
+        dls_values = {key: None for key, _, _, _ in dls_levels}
         if show_dls and dls_df is not None:
-            dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
-            for key, suffix, _, _ in config.DLS_LEVELS:
-                dls_values[key] = processing.lookup_dls(dls_df, dls_prefix + suffix, subprocess_name)
+            for key, dls_row, _, _ in dls_levels:
+                dls_values[key] = processing.lookup_dls(dls_df, dls_row, subprocess_name)
 
         categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
         legend_categories.update(categories)
@@ -523,6 +591,10 @@ def create_radial_synthesis_figure(
             # Seuils propres à chaque catégorie : seuil national x weight.
             weights = bdf_weights
             scale_values = values
+            if bdf_compare:
+                comp_col = _bdf_column(comp_df, subprocess_name)
+                comp_values = ([float(v) for v in comp_df[comp_col]] if comp_col is not None
+                               else [None] * n_scenarios)
         else:
             cba_values = [processing.extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
             pba_values = [processing.extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
@@ -550,6 +622,12 @@ def create_radial_synthesis_figure(
             lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
             lower_rel = (threshold_lower / threshold_ref) if threshold_lower is not None else None
             dls_rels = {key: (v / threshold_ref) if v is not None else None for key, v in dls_values.items()}
+            if bdf_compare:
+                # Même normalisation que les barres (seuil national x weight de
+                # la catégorie, lu dans le fichier de comparaison).
+                comp_rel_values = [(v / (threshold_ref * w)) if v is not None else None
+                                   for v, w in zip(comp_values, comp_weights)]
+                scale_rel_values = scale_rel_values + comp_rel_values
         else:
             rel_values = [None] * n_slots
             scale_rel_values = []
@@ -557,6 +635,8 @@ def create_radial_synthesis_figure(
             lb_rel = None
             lower_rel = None
             dls_rels = {key: None for key in dls_values}
+        if not bdf_compare or threshold_ref is None:
+            comp_rel_values = [None] * n_scenarios
 
         # scale_UB : pente propre au secteur (None = échelle 1L inchangée). Les
         # valeurs relatives restent stockées non remises à l'échelle ;
@@ -571,7 +651,7 @@ def create_radial_synthesis_figure(
         lp_info.append(dict(
             name=subprocess_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
             values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, lower_rel=lower_rel,
-            dls_rels=dls_rels, slope=slope, ub_slope=slope,
+            dls_rels=dls_rels, slope=slope, ub_slope=slope, comp_rel_values=comp_rel_values,
             color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
         ))
 
@@ -705,6 +785,21 @@ def create_radial_synthesis_figure(
                 ax.bar([theta], [height], width=bar_width, bottom=0.0,
                        color=_solo_color(scenario_idx), edgecolor="white", linewidth=0.6, zorder=5)
 
+        if bdf_compare:
+            # Différence avec l'année de base, sans toucher aux barres : si
+            # l'année de base est plus haute, bout de barre blanc à contour
+            # noir épais posé sur la barre ; si elle est plus basse, contour
+            # seul (sans remplissage) sur le haut de la barre, qui reste visible.
+            for theta, rel, comp_rel in zip(centers, info["rel_values"], info["comp_rel_values"]):
+                if rel is None or comp_rel is None or np.isclose(rel, comp_rel):
+                    continue
+                r_bar, r_comp = r_of(info, rel), r_of(info, comp_rel)
+                if r_comp == r_bar:
+                    continue  # les deux au-delà du plafond radial
+                ax.bar([theta], [abs(r_comp - r_bar)], width=bar_width, bottom=min(r_bar, r_comp),
+                       facecolor="white" if r_comp > r_bar else "none",
+                       edgecolor=COMPARISON_EDGE_COLOR, linewidth=COMPARISON_EDGE_WIDTH, zorder=6)
+
         # Bande extérieure : pavage complet du secteur (ring_centers/ring_width,
         # sans le gap_frac des barres) pour ne laisser aucun vide entre
         # scénarios ni entre secteurs. En mode combiné, la moitié PBA reprend
@@ -794,7 +889,7 @@ def create_radial_synthesis_figure(
             dls_spans = [(theta - bar_width / 2, theta + bar_width / 2) for theta in centers[0::2]]
         else:
             dls_spans = [(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"])]
-        for key, _, dls_color, _ in config.DLS_LEVELS:
+        for key, _, dls_color, _ in dls_levels:
             dls_rel = info["dls_rels"][key]
             if dls_rel is None or is_clipped(info, dls_rel):
                 continue
@@ -837,7 +932,7 @@ def create_radial_synthesis_figure(
             Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Safe Bound"),
         ]
     if show_dls:
-        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+        for key, _, dls_color, dls_label in dls_levels:
             if any(info["dls_rels"][key] is not None for info in lp_info):
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3, label=dls_label))
 
@@ -861,6 +956,9 @@ def create_radial_synthesis_figure(
     elif is_bdf:
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Total (France)"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Household categories"))
+        if bdf_compare:
+            legend_handles.append(Patch(facecolor="white", edgecolor=COMPARISON_EDGE_COLOR,
+                                        linewidth=COMPARISON_EDGE_WIDTH, label="Base year"))
     else:
         # Une seule comptabilité affichée : les deux nuances distinguent à la
         # place le scénario de référence des autres (voir _solo_color).

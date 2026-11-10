@@ -1,0 +1,201 @@
+﻿ExioNumber;ExioCode;ExioName;coicop_1;Postes_coicop_1
+1;p01.a;Paddy rice;C01;Alimentation
+2;p01.b;Wheat;C01;Alimentation
+3;p01.c;Cereal grains nec;C01;Alimentation
+4;p01.d;Vegetables, fruit, nuts;C01;Alimentation
+5;p01.e;Oil seeds;C01;Alimentation
+6;p01.f;Sugar cane, sugar beet;C01;Alimentation
+7;p01.g;Plant-based fibers;C01;Alimentation
+8;p01.h;Crops nec;C01;Alimentation
+9;p01.i;Cattle;C01;Alimentation
+10;p01.j;Pigs;C01;Alimentation
+11;p01.k;Poultry;C01;Alimentation
+12;p01.l;Meat animals nec;C01;Alimentation
+13;p01.m;Animal products nec;C01;Alimentation
+14;p01.n;Raw milk;C01;Alimentation
+15;p01.o;Wool, silk-worm cocoons;C03;Habillement
+16;p01.w.1;Manure (conventional treatment);C01;Alimentation
+17;p01.w.2;Manure (biogas treatment);C01;Alimentation
+18;p02;Products of forestry, logging and related services (02);C04;Logement
+19;p05;"Fish and other fishing products; services incidental of fishing (05)";C01;Alimentation
+20;p10.a;Anthracite;C04;Logement
+21;p10.b;Coking Coal;C04;Logement
+22;p10.c;Other Bituminous Coal;C04;Logement
+23;p10.d;Sub-Bituminous Coal;C04;Logement
+24;p10.e;Patent Fuel;C04;Logement
+25;p10.f;Lignite/Brown Coal;C04;Logement
+26;p10.g;BKB/Peat Briquettes;C04;Logement
+27;p10.h;Peat;C04;Logement
+28;p11.a;Crude petroleum and services related to crude oil extraction, excluding surveying;C07;Transports
+29;p11.b;Natural gas and services related to natural gas extraction, excluding surveying;C04;Logement
+30;p11.b.1;Natural Gas Liquids;C04;Logement
+31;p11.c;Other Hydrocarbons;C07;Transports
+32;p12;Uranium and thorium ores (12);C04;Logement
+33;p13.1;Iron ores;C05;Bien manufactures
+34;p13.20.11;Copper ores and concentrates;C05;Bien manufactures
+35;p13.20.12;Nickel ores and concentrates;C05;Bien manufactures
+36;p13.20.13;Aluminium ores and concentrates;C05;Bien manufactures
+37;p13.20.14;Precious metal ores and concentrates;C05;Bien manufactures
+38;p13.20.15;Lead, zinc and tin ores and concentrates;C05;Bien manufactures
+39;p13.20.16;Other non-ferrous metal ores and concentrates;C05;Bien manufactures
+40;p14.1;Stone;C04;Logement
+41;p14.2;Sand and clay;C04;Logement
+42;p14.3;Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.;C04;Logement
+43;p15.a;Products of meat cattle;C01;Alimentation
+44;p15.b;Products of meat pigs;C01;Alimentation
+45;p15.c;Products of meat poultry;C01;Alimentation
+46;p15.d;Meat products nec;C01;Alimentation
+47;p15.e;products of Vegetable oils and fats;C01;Alimentation
+48;p15.f;Dairy products;C01;Alimentation
+49;p15.g;Processed rice;C01;Alimentation
+50;p15.h;Sugar;C01;Alimentation
+51;p15.i;Food products nec;C01;Alimentation
+52;p15.j;Beverages;C02;Boissons et tabac
+53;p15.k;Fish products;C01;Alimentation
+54;p16;Tobacco products (16);C02;Boissons et tabac
+55;p17;Textiles (17);C03;Habillement
+56;p18;"Wearing apparel; furs (18)";C03;Habillement
+57;p19;Leather and leather products (19);C03;Habillement
+58;p20;"Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20)";C04;Logement
+59;p20.w;Wood material for treatment, Re-processing of secondary wood material into new wood material;C04;Logement
+60;p21.1;Pulp;C05;Bien manufactures
+61;p21.w.1;Secondary paper for treatment, Re-processing of secondary paper into new pulp;C05;Bien manufactures
+62;p21.2;Paper and paper products;C05;Bien manufactures
+63;p22;Printed matter and recorded media (22);C09;Loisirs
+64;p23.1.a;Coke Oven Coke;C04;Logement
+65;p23.1.b;Gas Coke;C04;Logement
+66;p23.1.c;Coal Tar;C04;Logement
+67;p23.20.a;Motor Gasoline;C07;Transports
+68;p23.20.b;Aviation Gasoline;C07;Transports
+69;p23.20.c;Gasoline Type Jet Fuel;C07;Transports
+70;p23.20.d;Kerosene Type Jet Fuel;C07;Transports
+71;p23.20.e;Kerosene;C04;Logement
+72;p23.20.f;Gas/Diesel Oil;C07;Transports
+73;p23.20.g;Heavy Fuel Oil;C07;Transports
+74;p23.20.h;Refinery Gas;C04;Logement
+75;p23.20.i;Liquefied Petroleum Gases (LPG);C04;Logement
+76;p23.20.j;Refinery Feedstocks;C04;Logement
+77;p23.20.k;Ethane;C04;Logement
+78;p23.20.l;Naphtha;C04;Logement
+79;p23.20.m;White Spirit & SBP;C04;Logement
+80;p23.20.n;Lubricants;C07;Transports
+81;p23.20.o;Bitumen;C04;Logement
+82;p23.20.p;Paraffin Waxes;C04;Logement
+83;p23.20.q;Petroleum Coke;C04;Logement
+84;p23.20.r;Non-specified Petroleum Products;C04;Logement
+85;p23.3;Nuclear fuel;C04;Logement
+86;p24.a;Plastics, basic;C05;Bien manufactures
+87;p24.a.w;Secondary plastic for treatment, Re-processing of secondary plastic into new plastic;C05;Bien manufactures
+88;p24.b;N-fertiliser;C01;Alimentation
+89;p24.c;P- and other fertiliser;C01;Alimentation
+90;p24.d;Chemicals nec;C05;Bien manufactures
+91;p24.e;Charcoal;C04;Logement
+92;p24.f;Additives/Blending Components;C07;Transports
+93;p24.g;Biogasoline;C07;Transports
+94;p24.h;Biodiesels;C07;Transports
+95;p24.i;Other Liquid Biofuels;C07;Transports
+96;p25;Rubber and plastic products (25);C05;Bien manufactures
+97;p26.a;Glass and glass products;C05;Bien manufactures
+98;p26.a.w;Secondary glass for treatment, Re-processing of secondary glass into new glass;C05;Bien manufactures
+99;p26.b;Ceramic goods;C05;Bien manufactures
+100;p26.c;Bricks, tiles and construction products, in baked clay;C04;Logement
+101;p26.d;Cement, lime and plaster;C04;Logement
+102;p26.d.w;Ash for treatment, Re-processing of ash into clinker;C04;Logement
+103;p26.e;Other non-metallic mineral products;C04;Logement
+104;p27.a;Basic iron and steel and of ferro-alloys and first products thereof;C05;Bien manufactures
+105;p27.a.w;Secondary steel for treatment, Re-processing of secondary steel into new steel;C05;Bien manufactures
+106;p27.41;Precious metals;C13;Bien manufactures
+107;p27.41.w;Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals;C13;Bien manufactures
+108;p27.42;Aluminium and aluminium products;C05;Bien manufactures
+109;p27.42.w;Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium;C05;Bien manufactures
+110;p27.43;Lead, zinc and tin and products thereof;C05;Bien manufactures
+111;p27.43.w;Secondary lead for treatment, Re-processing of secondary lead into new lead;C05;Bien manufactures
+112;p27.44;Copper products;C05;Bien manufactures
+113;p27.44.w;Secondary copper for treatment, Re-processing of secondary copper into new copper;C05;Bien manufactures
+114;p27.45;Other non-ferrous metal products;C05;Bien manufactures
+115;p27.45.w;Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals;C05;Bien manufactures
+116;p27.5;Foundry work services;C05;Bien manufactures
+117;p28;Fabricated metal products, except machinery and equipment (28);C05;Bien manufactures
+118;p29;Machinery and equipment n.e.c. (29);C05;Bien manufactures
+119;p30;Office machinery and computers (30);C08;Communication
+120;p31;Electrical machinery and apparatus n.e.c. (31);C05;Bien manufactures
+121;p32;Radio, television and communication equipment and apparatus (32);C08;Communication
+122;p33;Medical, precision and optical instruments, watches and clocks (33);C05;Bien manufactures
+123;p34;Motor vehicles, trailers and semi-trailers (34);C07;Transports
+124;p35;Other transport equipment (35);C07;Transports
+125;p36;"Furniture; other manufactured goods n.e.c. (36)";C05;Bien manufactures
+126;p37;Secondary raw materials;C05;Bien manufactures
+127;p37.w.1;Bottles for treatment, Recycling of bottles by direct reuse;C05;Bien manufactures
+128;p40.11.a;Electricity by coal;C04;Logement
+129;p40.11.b;Electricity by gas;C04;Logement
+130;p40.11.c;Electricity by nuclear;C04;Logement
+131;p40.11.d;Electricity by hydro;C04;Logement
+132;p40.11.e;Electricity by wind;C04;Logement
+133;p40.11.f;Electricity by petroleum and other oil derivatives;C04;Logement
+134;p40.11.g;Electricity by biomass and waste;C04;Logement
+135;p40.11.h;Electricity by solar photovoltaic;C04;Logement
+136;p40.11.i;Electricity by solar thermal;C04;Logement
+137;p40.11.j;Electricity by tide, wave, ocean;C04;Logement
+138;p40.11.k;Electricity by Geothermal;C04;Logement
+139;p40.11.l;Electricity nec;C04;Logement
+140;p40.12;Transmission services of electricity;C04;Logement
+141;p40.13;Distribution and trade services of electricity;C04;Logement
+142;p40.2.a;Coke oven gas;C04;Logement
+143;p40.2.b;Blast Furnace Gas;C04;Logement
+144;p40.2.c;Oxygen Steel Furnace Gas;C04;Logement
+145;p40.2.d;Gas Works Gas;C04;Logement
+146;p40.2.e;Biogas;C04;Logement
+147;p40.2.1;Distribution services of gaseous fuels through mains;C04;Logement
+148;p40.3;Steam and hot water supply services;C04;Logement
+149;p41;Collected and purified water, distribution services of water (41);C04;Logement
+150;p45;Construction work (45);C04;Logement
+151;p45.w;Secondary construction material for treatment, Re-processing of secondary construction material into aggregates;C04;Logement
+152;p50.a;Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries;C07;Transports
+153;p50.b;Retail trade services of motor fuel;C07;Transports
+154;p51;Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51);C05;Bien manufactures
+155;p52;"Retail  trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)";C05;Bien manufactures
+156;p55;Hotel and restaurant services (55);C11;Restauration
+157;p60.1;Railway transportation services;C07;Transports
+158;p60.2;Other land transportation services;C07;Transports
+159;p60.3;Transportation services via pipelines;C04;Logement
+160;p61.1;Sea and coastal water transportation services;C07;Transports
+161;p61.2;Inland water transportation services;C07;Transports
+162;p62;Air transport services (62);C07;Transports
+163;p63;"Supporting and auxiliary transport services; travel agency services (63)";C07;Transports
+164;p64;Post and telecommunication services (64);C08;Communication
+165;p65;Financial intermediation services, except insurance and pension funding services (65);C12;Prets credits assurancs
+166;p66;Insurance and pension funding services, except compulsory social security services (66);C12;Prets credits assurancs
+167;p67;Services auxiliary to financial intermediation (67);C12;Prets credits assurancs
+168;p70;Real estate services (70);C04;Logement
+169;p71;Renting services of machinery and equipment without operator and of personal and household goods (71);C05;Bien manufactures
+170;p72;Computer and related services (72);C08;Communication
+171;p73;Research and development services (73);C13;Bijouterie  soins effets personnels
+172;p74;Other business services (74);C13;Bijouterie  soins effets personnels
+173;p75;"Public administration and defence services; compulsory social security services (75)";C13;Bijouterie  soins effets personnels
+174;p80;Education services (80);C10;Education
+175;p85;Health and social work services (85);C06;Sante
+176;p90.1.a;Food waste for treatment: incineration;C04;Logement
+177;p90.1.b;Paper waste for treatment: incineration;C04;Logement
+178;p90.1.c;Plastic waste for treatment: incineration;C04;Logement
+179;p90.1.d;Intert/metal waste for treatment: incineration;C04;Logement
+180;p90.1.e;Textiles waste for treatment: incineration;C04;Logement
+181;p90.1.f;Wood waste for treatment: incineration;C04;Logement
+182;p90.1.g;Oil/hazardous waste for treatment: incineration;C04;Logement
+183;p90.2.a;Food waste for treatment: biogasification and land application;C04;Logement
+184;p90.2.b;Paper waste for treatment: biogasification and land application;C04;Logement
+185;p90.2.c;Sewage sludge for treatment: biogasification and land application;C04;Logement
+186;p90.3.a;Food waste for treatment: composting and land application;C04;Logement
+187;p90.3.b;Paper and wood waste for treatment: composting and land application;C04;Logement
+188;p90.4.a;Food waste for treatment: waste water treatment;C04;Logement
+189;p90.4.b;Other waste for treatment: waste water treatment;C04;Logement
+190;p90.5.a;Food waste for treatment: landfill;C04;Logement
+191;p90.5.b;Paper for treatment: landfill;C04;Logement
+192;p90.5.c;Plastic waste for treatment: landfill;C04;Logement
+193;p90.5.d;Inert/metal/hazardous waste for treatment: landfill;C04;Logement
+194;p90.5.e;Textiles waste for treatment: landfill;C04;Logement
+195;p90.5.f;Wood waste for treatment: landfill;C04;Logement
+196;p91;Membership organisation services n.e.c. (91);C13;Bijouterie  soins effets personnels
+197;p92;Recreational, cultural and sporting services (92);C09;Loisirs
+198;p93;Other services (93);C13;Bijouterie  soins effets personnels
+199;p95;Private households with employed persons (95);C13;Bijouterie  soins effets personnels
+200;p99;Extra-territorial organizations and bodies;C13;Bijouterie  soins effets personnels

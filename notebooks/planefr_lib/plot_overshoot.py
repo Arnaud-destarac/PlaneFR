@@ -32,6 +32,8 @@ les bulles, scenario_style_map) — voir planefr_lib.colors.scenario_style_map
 et le README du refactor pour le détail des divergences résolues.
 """
 
+import re
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
@@ -779,8 +781,12 @@ def create_overshoot_safe_space_figure_by_region(
             par défaut, la figure étant en valeurs absolues.
         sharing_principle: "EPC" (equal per capita) ou "CTR" (capability to
             reduce). La part de référence, qui positionne les bulles, est lue
-            dans la colonne "Part EPC ref. ..." ou "Part CTR ref. ..." selon le
-            cas (config.BUDGET_SHARE_COLUMN_PATTERNS).
+            dans la colonne "Part CTR ref. ..." pour CTR et, pour EPC, dans
+            "UN – EPC 2019" ("UN – EPC 2019-2100" pour GHG emissions) — voir
+            config.region_figure_epc_ref_pattern. Les bornes de sensibilité
+            restent "<principe> min/max". Les budgets mondiaux de GHG
+            emissions sont lus dans la colonne "GHG emissions (2019)" de
+            seuils.xlsx (config.region_figure_seuil_column).
         sensitivity: si True, chaque bulle reçoit un segment horizontal
             (intervalle de confiance, avec petits traits verticaux aux
             extrémités) reliant les deux niveaux d'overshoot obtenus avec les
@@ -848,17 +854,35 @@ def create_overshoot_safe_space_figure_by_region(
         for name in scenario_names
     }
 
+    # EPC de référence lue dans les colonnes ONU (« UN – EPC 2019 », ou
+    # « UN – EPC 2019-2100 » pour les GHG) : cf. config.region_figure_epc_ref_pattern.
+    if sharing_principle == "EPC":
+        for pattern in {config.REGION_FIGURE_EPC_REF_PATTERN,
+                        *config.REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS.values()}:
+            if not any(re.search(pattern, str(c), flags=re.IGNORECASE) for c in shares_df.columns):
+                raise ValueError(
+                    f"Aucune colonne de shares_df ne correspond à {pattern!r} : régénérer "
+                    f"budget_shares.xlsx (colonnes « UN – EPC ») et le recharger avec "
+                    f"io.load_budget_shares_df."
+                )
+
     def budget_of(subprocess_name, scenario_name, threshold_kind="lb", variant="ref"):
+        column_pattern = (config.region_figure_epc_ref_pattern(subprocess_name)
+                          if sharing_principle == "EPC" and variant == "ref" else None)
+        # Colonne de seuils.xlsx portant les budgets (ex. GHG emissions -> GHG
+        # emissions (2019)) : cf. config.region_figure_seuil_column.
+        seuil_column = config.region_figure_seuil_column(subprocess_name)
         budget = processing.compute_region_budget(
-            seuils_df, shares_df, subprocess_name, codes[scenario_name],
+            seuils_df, shares_df, seuil_column, codes[scenario_name],
             sharing_principle, variant=variant, threshold_kind=threshold_kind,
+            column_pattern=column_pattern,
         )
         # W n'a pas de parts min/max : sensibilité par habitant, en faisant
         # varier la période de population de la limite (cf. pop_df).
         if (budget is None and variant != "ref" and pop_df is not None
                 and str(codes[scenario_name]).upper() == config.WORLD_REGION_CODE):
             period_budgets = [
-                processing.compute_world_period_budget(seuils_df, pop_df, subprocess_name, row,
+                processing.compute_world_period_budget(seuils_df, pop_df, seuil_column, row,
                                                        threshold_kind=threshold_kind)
                 for row in config.SHARING_PRINCIPLE_POPULATION_ROW.values()
             ]
