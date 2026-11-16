@@ -39,7 +39,7 @@ BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
 # Nom de base : le fichier lu est impacts_facteurs_agrégé_{groupe}*.xlsx (io.bdf_file).
 BDF_FILE = PROJECT_DIR.parent / "Github" / "ademe_eemrio" / "impacts_facteurs_agrégé.xlsx"
 BDF_WEIGHT_COL = "weight"
-BDF_TOTAL_ROW = "Total"
+BDF_TOTAL_ROW = "Average"
 
 # ============================================================================
 # SCÉNARIOS

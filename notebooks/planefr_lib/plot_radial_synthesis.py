@@ -206,6 +206,22 @@ def _nice_radial_ticks(rel_cap, max_ticks=6):
     return sorted(set(ticks) | {1})
 
 
+def _regular_radial_ticks(rel_top, max_ticks=5):
+    """Graduations d'un secteur remis à l'échelle (scale_UB) : 1L, puis les
+    multiples d'un pas "rond" (1, 2, 2.5, 5 x 10^k) compris entre 1L (exclu) et
+    rel_top (inclus, en multiples de la Safe Limit, valeurs RÉELLES -- avant
+    _scale_rel), avec au plus ~max_ticks graduations au-dessus de 1L."""
+    span = rel_top - 1
+    if not np.isfinite(rel_top) or span <= 0:
+        return [1]
+    raw = span / max_ticks
+    mag = 10 ** np.floor(np.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw * (1 - 1e-9))
+    k_min = int(np.floor(1 / step + 1e-9)) + 1
+    k_max = int(np.floor(rel_top / step + 1e-9))
+    return [1] + [round(float(k * step), 10) for k in range(k_min, k_max + 1)]
+
+
 # ============================================================================
 # EXTRACTION DES VALEURS, EMPILEMENT PAR CATÉGORIE, ANNOTATION
 # ============================================================================
@@ -292,6 +308,12 @@ def _annotate(val, ref_val, is_reference, is_pba=False):
     return text, color
 
 
+def _format_overshoot(rel):
+    """Niveau de dépassement de la Safe Limit, ex. 2.23 -> "x2,2" (virgule
+    décimale)."""
+    return f"x{rel:.1f}".replace(".", ",")
+
+
 def _bdf_column(bdf_df, subprocess_name):
     """Colonne de la feuille Bdf correspondant au sous-processus (nommée
     "<sous-processus> (<unité>)"), ou None si absente."""
@@ -331,10 +353,9 @@ def create_radial_synthesis_figure(
     reprennent les lignes "brutes" de seuils.xlsx/feuille "Synthèse" ("Lower
     safe bound"/"Safe limit"/"Upper safe bound"). display_bounds=False masque
     Lower Safe Bound et Upper Safe Bound (seul le cercle Safe Limit reste
-    affiché). Bande extérieure : reprend l'annotation de
-    create_synthesis_figure_by_lp (valeur absolue pour le scénario de
-    référence, variation % pour les autres), repositionnée en 1 sous-bande par
-    scénario.
+    affiché). Bande extérieure : 1 sous-bande par scénario ; niveau de
+    dépassement de la Safe Limit pour le scénario de référence (ex. "x2,2",
+    légende "x2 = Overshoot"), variation % par rapport à lui pour les autres.
 
     Args:
         all_scenarios_data: liste de {lp_name: résultat de process_scenario},
@@ -440,15 +461,16 @@ def create_radial_synthesis_figure(
         Bdf: None (défaut) = figure multi-scénarios classique. Sinon, nom d'une
             feuille (ex. "décile") du fichier BdF du groupe scenario_group
             (io.bdf_file : impacts_facteurs_agrégé_{scenario_group}*.xlsx) : les scénarios sont
-            remplacés par la valeur agrégée (ligne "Total", en 1re position,
+            remplacés par la valeur agrégée (ligne "Average", en 1re position,
             nuance pleine) puis les catégories de ménages de la 1re colonne de
             cette feuille (nuance claire), 1 barre pleine chacune, de
             hauteur = pression de la catégorie / (Safe Limit nationale x
             weight) -- chaque catégorie reçoit la part "weight" du budget
             national. Upper/Lower Safe Bound et DLS étant pondérés par le même
             weight, leur rapport au Safe Limit est inchangé : les arcs restent
-            communs à tout le secteur. La bande extérieure affiche la valeur
-            absolue pour le Total et, pour chaque catégorie, la variation
+            communs à tout le secteur. La bande extérieure affiche pour le
+            Total son niveau de dépassement de la Safe Limit (ex. "x2,2",
+            légende "x2 = Overshoot") et, pour chaque catégorie, la variation
             relative de son overshoot (hauteur de barre) par rapport à celui
             du Total (ex. +20%). show_cba/show_pba,
             show_categories/show_import_split et le tri des scénarios sont
@@ -494,7 +516,7 @@ def create_radial_synthesis_figure(
 
     comp_df = None
     if is_bdf:
-        # Les "scénarios" deviennent la valeur agrégée (ligne "Total", en
+        # Les "scénarios" deviennent la valeur agrégée (ligne "Average", en
         # 1re position = référence) suivie des catégories de ménages.
         bdf_df = io.load_bdf(Bdf, scenario_group)
         bdf_df = pd.concat([bdf_df.loc[[config.BDF_TOTAL_ROW]],
@@ -519,12 +541,24 @@ def create_radial_synthesis_figure(
     # Comparaison Bdf : DLS central de l'année de base et DLS 2050 ; sinon les 3
     # niveaux de config.DLS_LEVELS, lignes "DLS ..." (groupe année de base) ou
     # "DLS 2050 ...".
+    # 5e élément : barres couvertes par l'arc ("all" = tout le secteur, "ref" =
+    # scénario de référence seul, "others" = tous les autres scénarios).
     if bdf_compare:
-        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year"),
-                      ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050")]
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "all"),
+                      ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "all")]
+    elif not is_bdf and scenario_group != config.DLS_BASE_YEAR_GROUP:
+        # Multi-scénarios 2050 : DLS de l'année de base sur la barre Base year
+        # uniquement, DLS 2050 sur les autres scénarios.
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "ref"),
+                      ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "others")]
     else:
-        dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
-        dls_levels = [(key, dls_prefix + suffix, color, label) for key, suffix, color, label in config.DLS_LEVELS]
+        is_base_year = scenario_group == config.DLS_BASE_YEAR_GROUP
+        dls_prefix = "DLS" if is_base_year else "DLS 2050"
+        # Libellé de légende précisant l'horizon du DLS ("DLS Base year ..." /
+        # "DLS 2050 ...") à la place du préfixe générique "DLS".
+        label_prefix = "DLS Base year" if is_base_year else "DLS 2050"
+        dls_levels = [(key, dls_prefix + suffix, color, label_prefix + label[len("DLS"):], "all")
+                      for key, suffix, color, label in config.DLS_LEVELS]
 
     n_lp = len(subprocesses)
     n_scenarios = len(scenario_names)
@@ -576,9 +610,9 @@ def create_radial_synthesis_figure(
         threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
         unit_text = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, subprocess_name)
         # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
-        dls_values = {key: None for key, _, _, _ in dls_levels}
+        dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
-            for key, dls_row, _, _ in dls_levels:
+            for key, dls_row, *_ in dls_levels:
                 dls_values[key] = processing.lookup_dls(dls_df, dls_row, subprocess_name)
 
         categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
@@ -678,8 +712,18 @@ def create_radial_synthesis_figure(
     # au L entier supérieur, qui pouvait laisser jusqu'à 1L d'espace mort. Les
     # graduations "NL", elles, restent des multiples entiers (jusqu'au dernier
     # ≤ ce sommet réel).
-    # scale_UB : seule la graduation 1L reste commune à tous les secteurs.
+    # scale_UB : seule la graduation 1L reste commune à tous les secteurs ;
+    # chaque secteur reçoit en plus ses propres graduations régulières (valeurs
+    # réelles), jusqu'au sommet de son échelle (rel_cap_input ramené en valeur
+    # réelle par l'inverse de _scale_rel).
     rel_ticks = [1] if scale_UB else _nice_radial_ticks(rel_cap_input)
+    for info in lp_info:
+        if not scale_UB:
+            info["rel_ticks"] = rel_ticks
+            continue
+        slope = info["slope"]
+        rel_top = rel_cap_input if (slope is None or rel_cap_input <= 1) else 1 + (rel_cap_input - 1) / slope
+        info["rel_ticks"] = _regular_radial_ticks(rel_top)
     rel_cap = rel_cap_input * (1 + RADIAL_AXIS_MARGIN_FRAC)
     r_max_plot = to_r(rel_cap)
     ring_thickness = r_max_plot * 0.11
@@ -709,17 +753,28 @@ def create_radial_synthesis_figure(
 
     # Grille de fond : cercles concentriques + spokes aux limites de secteur,
     # avec graduations "NL" répétées à chacune des n_lp limites.
+    # scale_UB : graduations propres à chaque secteur -> arcs limités au
+    # secteur (au lieu de cercles complets), rayon après _scale_rel.
     theta_full = np.linspace(0, 2 * np.pi, 400)
-    for t in rel_ticks:
-        if t == 1:
-            continue  # tracé séparément, en gras, comme cercle Safe Limit
-        ax.plot(theta_full, np.full_like(theta_full, to_r(t)), color="#e0e0e0", linewidth=0.7, zorder=1)
+    if not scale_UB:
+        for t in rel_ticks:
+            if t == 1:
+                continue  # tracé séparément, en gras, comme cercle Safe Limit
+            ax.plot(theta_full, np.full_like(theta_full, to_r(t)), color="#e0e0e0", linewidth=0.7, zorder=1)
 
     for lp_idx, b in enumerate(geo["boundaries"]):
+        info = lp_info[lp_idx]
         ax.plot([b, b], [0, r_ring_end], color="#bdbdbd", linewidth=0.8, zorder=1)
         offset = geo["wedge_span"] * 0.02
-        for t in rel_ticks:
-            ax.text(b + offset, to_r(t), _format_tick(t), ha="left", va="center", fontsize=12,
+        if scale_UB:
+            theta_sector = np.linspace(b, b + geo["wedge_span"], 60)
+            for t in info["rel_ticks"]:
+                if t == 1:
+                    continue
+                ax.plot(theta_sector, np.full_like(theta_sector, r_of(info, t)), color="#e0e0e0",
+                        linewidth=0.7, zorder=1)
+        for t in info["rel_ticks"]:
+            ax.text(b + offset, r_of(info, t), _format_tick(t), ha="left", va="center", fontsize=12,
                      color="#555555", rotation=_radial_rotation_deg(b), rotation_mode="anchor",
                      bbox=dict(facecolor="white", edgecolor="white", alpha=0.7, pad=0.5), zorder=3)
 
@@ -836,7 +891,15 @@ def create_radial_synthesis_figure(
             val = info["values"][i]
             if val is None:
                 continue
-            if is_bdf and i != reference_idx:
+            if is_ref_by_slot[i]:
+                # Scénario de référence (Bdf : Total), CBA et PBA en mode
+                # combiné : niveau de dépassement de la Safe Limit (1L), ex.
+                # "x2,2", plutôt que la valeur absolue (légende "x2 = Overshoot").
+                rel = info["rel_values"][i]
+                if rel is None:
+                    continue
+                text, color = _format_overshoot(rel), "black"
+            elif is_bdf:
                 # Variation relative de l'overshoot (pression / seuil pondéré)
                 # de la catégorie par rapport à celui de la valeur agrégée.
                 text, color = _annotate(info["rel_values"][i], info["rel_values"][reference_idx], False, True)
@@ -885,14 +948,28 @@ def create_radial_synthesis_figure(
         # Arcs DLS : tout le secteur utile, sauf en mode combiné où ils ne
         # couvrent que les barres CBA (le DLS est un plancher de consommation,
         # sans pertinence pour la barre PBA adjacente).
-        if combined:
-            dls_spans = [(theta - bar_width / 2, theta + bar_width / 2) for theta in centers[0::2]]
-        else:
-            dls_spans = [(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"])]
-        for key, _, dls_color, _ in dls_levels:
+        # Scope "ref"/"others" : arc limité aux barres du scénario de référence
+        # ou des autres scénarios (barres CBA seules en mode combiné).
+        cba_centers = centers[0::2] if combined else centers
+        for key, _, dls_color, _, scope in dls_levels:
             dls_rel = info["dls_rels"][key]
             if dls_rel is None or is_clipped(info, dls_rel):
                 continue
+            if scope == "all" and not combined:
+                dls_spans = [(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"])]
+            elif scope == "ref":
+                # Arc élargi : du bord du secteur (ou de la barre voisine) jusqu'à
+                # toucher la barre suivante, de part et d'autre de la barre Base year.
+                slot = reference_idx * 2 if combined else reference_idx
+                sector_start = geo["boundaries"][lp_idx]
+                theta_start = (centers[slot - 1] + bar_width / 2) if slot > 0 else sector_start
+                theta_end = ((centers[slot + 1] - bar_width / 2) if slot + 1 < len(centers)
+                             else sector_start + geo["wedge_span"])
+                dls_spans = [(theta_start, theta_end)]
+            else:
+                dls_spans = [(theta - bar_width / 2, theta + bar_width / 2)
+                             for scenario_idx, theta in enumerate(cba_centers)
+                             if scope == "all" or (scenario_idx == reference_idx) == (scope == "ref")]
             for theta_start, theta_end in dls_spans:
                 theta_arc = np.linspace(theta_start, theta_end, 40)
                 ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, dls_rel)), color=dls_color,
@@ -932,7 +1009,7 @@ def create_radial_synthesis_figure(
             Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Safe Bound"),
         ]
     if show_dls:
-        for key, _, dls_color, dls_label in dls_levels:
+        for key, _, dls_color, dls_label, _ in dls_levels:
             if any(info["dls_rels"][key] is not None for info in lp_info):
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3, label=dls_label))
 
@@ -954,8 +1031,8 @@ def create_radial_synthesis_figure(
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Consumption-based"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Production-based"))
     elif is_bdf:
-        legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Total (France)"))
-        legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Household categories"))
+        legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Average household"))
+        legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Income decile groups"))
         if bdf_compare:
             legend_handles.append(Patch(facecolor="white", edgecolor=COMPARISON_EDGE_COLOR,
                                         linewidth=COMPARISON_EDGE_WIDTH, label="Base year"))
@@ -965,7 +1042,30 @@ def create_radial_synthesis_figure(
         legend_handles.append(Patch(facecolor="#888888", edgecolor="#333333", label="Base year"))
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Other scenarios"))
 
-    fig.legend(handles=legend_handles, loc="lower center", ncol=min(5, len(legend_handles)),
+    # Case du scénario de référence (Bdf : Total) dans la bande extérieure :
+    # niveau de dépassement de la Safe Limit (x2,2...)
+    legend_handles.append(Line2D([0], [0], linestyle="none", marker="$x2$", markersize=18,
+                                 color="black", label="Overshoot of Safe Limit (1L)"))
+
+    # Variation relative des empreintes
+    if is_bdf :
+        legend_handles.append(Line2D([0], [0], linestyle="none", marker=r"$+10\%$", markersize=32,
+                                         color="#F34E4B" if combined else "#991616", label="Per capita footprint vs. Average"))
+    else :
+        legend_handles.append(Line2D([0], [0], linestyle="none", marker=r"$+10\%$", markersize=32,
+                                 color="#F34E4B" if combined else "#991616", label="Footprint change vs. Baseline"))
+
+    # matplotlib remplit la légende colonne par colonne : on complète la grille
+    # avec des cases vides pour que la dernière entrée (variation des empreintes)
+    # tombe en bas à droite, donc sur la 2nde ligne (au moins 2 lignes).
+    n_rows = max(2, -(-len(legend_handles) // 5))
+    n_cols = -(-len(legend_handles) // n_rows)
+    n_pad = n_rows * n_cols - len(legend_handles)
+    legend_handles = (legend_handles[:-1]
+                      + [Line2D([0], [0], linestyle="none", label=" ") for _ in range(n_pad)]
+                      + legend_handles[-1:])
+
+    fig.legend(handles=legend_handles, loc="lower center", ncol=n_cols,
                bbox_to_anchor=(0.5, 0.015), frameon=False, fontsize=15)
 
     fig.suptitle(title, fontsize=18, fontweight="bold", y=0.975)

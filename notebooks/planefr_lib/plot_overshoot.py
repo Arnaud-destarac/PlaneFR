@@ -36,7 +36,6 @@ import re
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
@@ -53,6 +52,13 @@ AXIS_TICK_LABEL_FONTSIZE = 13
 # barres) à partir des deux écarts réglables title_gap_below_bar/
 # title_gap_above_bar, pour que le titre ait toujours la place de tenir.
 TITLE_BLOCK_HEIGHT = 0.35
+
+# show_value_overshoot=True uniquement — hauteur (fraction de hauteur de barre)
+# réservée au-dessus de chaque barre pour son propre axe "nL" (graduations +
+# libellés), ajoutée à `hspace` et à l'écart titre/barre pour que le titre
+# passe au-dessus de cet axe au lieu de le chevaucher.
+VALUE_AXIS_BLOCK_HEIGHT = 0.30
+VALUE_AXIS_TICK_LABEL_FONTSIZE = 11
 
 # ============================================================================
 # HELPERS GÉNÉRIQUES, PARTAGÉS PAR LES DEUX FIGURES (jamais modifiés depuis
@@ -127,6 +133,41 @@ def _set_break_axis_ticks(ax_ext):
 
     ax_ext.set_xticks(ticks)
     ax_ext.set_xticklabels([f"{t}L" for t in ticks], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
+
+
+def _regular_rel_ticks(rel_top, max_ticks=7):
+    """Graduations d'un axe "nL" propre à une barre (show_value_overshoot) : 1L,
+    puis les multiples d'un pas "rond" (1, 2, 2.5, 5 x 10^k) compris entre 1L
+    (exclu) et rel_top (inclus, valeurs RÉELLES en multiples de la Safe Limit),
+    avec au plus ~max_ticks graduations au-dessus de 1L (même logique que
+    plot_radial_synthesis._regular_radial_ticks)."""
+    span = rel_top - 1
+    if not np.isfinite(rel_top) or span <= 0:
+        return [1]
+    raw = span / max_ticks
+    mag = 10 ** np.floor(np.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw * (1 - 1e-9))
+    k_min = int(np.floor(1 / step + 1e-9)) + 1
+    k_max = int(np.floor(rel_top / step + 1e-9))
+    return [1] + [round(float(k * step), 10) for k in range(k_min, k_max + 1)]
+
+
+def _draw_bar_value_axis(axis, ticks, positions):
+    """Axe "nL" juste au-dessus d'une barre (show_value_overshoot) : graduations
+    aux abscisses `positions` (coordonnées de la barre), libellées par les
+    valeurs réelles `ticks` (ex. 1L, 100L, 1000L)."""
+    x_max = axis.get_xlim()[1]
+    kept = [(t, x) for t, x in zip(ticks, positions) if x is not None and 0 <= x <= x_max * (1 + 1e-9)]
+    axis.spines["top"].set_visible(True)
+    axis.spines["top"].set_position(("axes", 1.0))
+    axis.spines["top"].set_linewidth(0.8)
+    axis.spines["top"].set_color("#555555")
+    axis.xaxis.tick_top()
+    axis.set_xticks([x for _, x in kept])
+    axis.set_xticklabels([f"{t:g}L" for t, _ in kept], fontsize=VALUE_AXIS_TICK_LABEL_FONTSIZE,
+                         fontweight="bold", color="#333333")
+    axis.tick_params(axis="x", top=True, labeltop=True, length=3, pad=1.5, color="#555555",
+                     labelsize=VALUE_AXIS_TICK_LABEL_FONTSIZE)
 
 
 def _plot_sensitivity_segment(ax, x_min, x_max, y_pos, color, cap_half_height=0.04,
@@ -219,15 +260,12 @@ def _sort_subprocesses_by_france_overshoot(
     return sorted(subprocesses, key=sort_key)
 
 
-def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value_label=None):
+def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None):
     """Dessine une bulle de scénario sur `ax`.
 
     hatched=True : bulle hachurée (PBA-accounting) ; hatch_color en contrôle la
     couleur (noir par défaut, blanc pour les scénarios "trend", pour rester
     lisible sur un fond sombre).
-    value_label, si fourni, affiche le texte à droite de la bulle (avec un
-    liseré sombre pour rester lisible sur le dégradé) — utilisé uniquement
-    quand show_value_labels=True dans create_overshoot_safe_space_figure.
     """
     sc = ax.scatter(rel_x, y_pos, s=300, marker="o", facecolor=style["face"],
                      edgecolor=style["edge"], linewidth=1.5, zorder=2)
@@ -236,18 +274,12 @@ def _plot_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value
         if hatch_color is not None:
             sc.set_edgecolor(hatch_color)
 
-    if value_label is not None:
-        x_span = ax.get_xlim()[1] - ax.get_xlim()[0]
-        txt = ax.text(rel_x + x_span * 0.015, y_pos, value_label, color=style["face"],
-                       fontsize=8.2, ha="left", va="center", zorder=11, clip_on=True)
-        txt.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#2b2b2b")])
-
 
 def create_overshoot_safe_space_figure(
     all_scenarios_data, seuils_df, scenario_names,
     threshold_lb_row, threshold_ub_row, unit_row,
     ub_color="#bc270a", x_main_max=8.0, display_bounds=True,
-    show_pba=False, show_value_labels=True, show_value_bounds=True,
+    show_pba=False, show_value_overshoot=False, show_value_bounds=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
@@ -278,8 +310,10 @@ def create_overshoot_safe_space_figure(
             entrées de légende).
         show_pba: si True, cherche une clé "pba" dans chaque payload et trace
             une seconde bulle hachurée (production-based accounting).
-        show_value_labels: si True, affiche la valeur absolue à côté de chaque
-            bulle (uniquement utilisé par la figure en valeurs absolues).
+        show_value_overshoot: si True, chaque barre reçoit son propre axe
+            "nL" (1L, 2L, 3L...) juste au-dessus d'elle, au lieu de l'axe
+            unique en haut de la figure (le titre de la barre est décalé
+            au-dessus de cet axe). False (défaut) : axe commun unique.
         show_value_bounds: si True (défaut), affiche la valeur absolue
             au-dessus du trait Safe Limit ainsi que l'unité du LP (à côté du
             nom, en marge de gauche ou au-dessus de la barre selon
@@ -347,12 +381,16 @@ def create_overshoot_safe_space_figure(
 
     row_height_factor = 1.35 if title_above_bar else 1.2
     # hspace dimensionné pour que le bloc de titre (nom + unité) tienne
-    # toujours entre les deux écarts demandés, quels que soient leurs réglages.
-    hspace = (title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar else 0.12
+    # toujours entre les deux écarts demandés, quels que soient leurs réglages
+    # (+ l'axe "nL" propre à chaque barre si show_value_overshoot).
+    value_axis_extra = VALUE_AXIS_BLOCK_HEIGHT if show_value_overshoot else 0.0
+    hspace = ((title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar
+              else 0.12) + value_axis_extra
     fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
     gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
     top_main_ax = None
+    value_axes = []
 
     for row_idx, subprocess_name in enumerate(subprocesses):
         ax = fig.add_subplot(gs[row_idx, 0])
@@ -486,8 +524,7 @@ def create_overshoot_safe_space_figure(
             if p["rel_cba_min"] is not None:
                 _plot_sensitivity_segment(target_ax_cba, p["rel_cba_min"], p["rel_cba_max"], p["y_pos"],
                                            color="white")
-            _plot_bubble(target_ax_cba, p["rel_cba"], p["y_pos"], style, hatched=False,
-                         value_label=_fmt_abs(p["abs_cba"]) if show_value_labels else None)
+            _plot_bubble(target_ax_cba, p["rel_cba"], p["y_pos"], style, hatched=False)
 
             if p["rel_pba"] is not None:
                 hatch_color = "white" if "trend" in p["sname"].lower() else "black"
@@ -497,17 +534,18 @@ def create_overshoot_safe_space_figure(
                     _plot_sensitivity_segment(target_ax_pba, p["rel_pba_min"], p["rel_pba_max"], p["y_pos"],
                                                color="black")
                 _plot_bubble(target_ax_pba, p["rel_pba"], p["y_pos"], style, hatched=True,
-                             hatch_color=hatch_color,
-                             value_label=_fmt_abs(p["abs_pba"]) if show_value_labels else None)
+                             hatch_color=hatch_color)
 
         # Nom du LP + unité : dans la marge de gauche (défaut), ou au-dessus
         # de la barre (title_above_bar=True). `ceiling` (= 1.0 + hspace, le bas
         # de la barre du dessus) est la même formule pour toutes les lignes, y
         # compris la 1ère : hspace est dimensionné (cf. plus haut) pour laisser
         # aussi la place aux graduations de l'axe X partagé au-dessus d'elle.
+        # show_value_overshoot : le titre est décalé au-dessus de l'axe "nL"
+        # propre à la barre (value_axis_extra).
         if title_above_bar:
             _draw_lp_title_above(ax, subprocess_name, unit_text, 1.0 + hspace,
-                                  title_gap_below_bar, title_gap_above_bar)
+                                  title_gap_below_bar + value_axis_extra, title_gap_above_bar)
         else:
             ax.text(-0.03, 0.57, subprocess_name, transform=ax.transAxes, ha="right", va="center",
                     fontsize=13, fontweight="bold")
@@ -527,28 +565,45 @@ def create_overshoot_safe_space_figure(
             axis.xaxis.tick_top()
             axis.tick_params(axis="x", length=4, pad=4)
 
-        if row_idx != 0:
-            ax.tick_params(axis="x", labeltop=False, top=False)
-        if use_break and ax_ext.get_visible():
-            ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
+        if show_value_overshoot:
+            # Axe "nL" propre à chaque barre, juste au-dessus d'elle (échelle
+            # commune ici : 1L = Safe Limit de la ligne, mêmes graduations
+            # entières que l'axe principal).
+            ticks = list(range(1, int(x_main_max) + 1))
+            _draw_bar_value_axis(ax, ticks, ticks)
+            value_axes.append(ax)
+            if use_break and ax_ext.get_visible():
+                ax_ext.spines["top"].set_position(("axes", 1.0))
+                ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=VALUE_AXIS_TICK_LABEL_FONTSIZE,
+                                   length=3, pad=1.5)
+                value_axes.append(ax_ext)
+        else:
+            if row_idx != 0:
+                ax.tick_params(axis="x", labeltop=False, top=False)
+            if use_break and ax_ext.get_visible():
+                ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
 
     # Axe X principal commun (1L, 2L, 3L...) + labels de zone, sur la 1ère ligne
+    # (show_value_overshoot : labels de zone seuls, chaque barre a son axe)
     if top_main_ax is not None:
-        top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
-        top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
-        # Position de la spine du haut en fraction d'axes (et non en points via
-        # "outward") : un décalage en points n'est pas fiable ici, car
-        # plt.tight_layout() (utilisé plus bas) recalcule la hauteur réelle des
-        # axes sans être compatible avec ce déplacement de spine (cf. warning
-        # matplotlib), ce qui pouvait faire atterrir la spine/les graduations
-        # en plein milieu du titre de la 1ère barre (ex. "Blue water
-        # consumption") au lieu d'au-dessus. En fraction d'axes, la position
-        # reste toujours au-dessus du bloc de titre (ceiling), quelle que soit
-        # la taille finale de la figure.
         top_spine_y = (1.0 + hspace + 0.03) if title_above_bar else 1.03
-        top_main_ax.spines["top"].set_position(("axes", top_spine_y))
-        top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
-        zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
+        if not show_value_overshoot:
+            top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
+            top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
+            # Position de la spine du haut en fraction d'axes (et non en points via
+            # "outward") : un décalage en points n'est pas fiable ici, car
+            # plt.tight_layout() (utilisé plus bas) recalcule la hauteur réelle des
+            # axes sans être compatible avec ce déplacement de spine (cf. warning
+            # matplotlib), ce qui pouvait faire atterrir la spine/les graduations
+            # en plein milieu du titre de la 1ère barre (ex. "Blue water
+            # consumption") au lieu d'au-dessus. En fraction d'axes, la position
+            # reste toujours au-dessus du bloc de titre (ceiling), quelle que soit
+            # la taille finale de la figure.
+            top_main_ax.spines["top"].set_position(("axes", top_spine_y))
+            top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
+            zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
+        else:
+            zone_label_y = (1.0 + hspace + 0.05) if title_above_bar else (1.0 + value_axis_extra + 0.05)
         for txt, color, x_pos in [
             ("Safe Operating Space", "#0b7d3e", 0.00),
             ("Increasing Risk", "#d47818", 0.20),
@@ -596,6 +651,8 @@ def create_overshoot_safe_space_figure(
         # déplacée plus haut) et leur fait perdre le gras appliqué via
         # set_xticklabels ; on le réapplique donc en tout dernier.
         plt.setp(top_main_ax.get_xticklabels(), fontweight="bold")
+    for axis in value_axes:
+        plt.setp(axis.get_xticklabels(), fontweight="bold")
 
     return fig
 
@@ -711,7 +768,7 @@ def _relative_bounds(abs_value, budget_min, budget_max):
     return min(variants), max(variants)
 
 
-def _plot_region_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None, value_label=None):
+def _plot_region_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None):
     """Version de _plot_bubble privée à create_overshoot_safe_space_figure_by_region
     (même logique, bulles plus petites -- BUBBLE_MARKER_SIZE_REGION -- pour rester
     lisibles quand une ligne a beaucoup de scénarios)."""
@@ -722,18 +779,12 @@ def _plot_region_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None
         if hatch_color is not None:
             sc.set_edgecolor(hatch_color)
 
-    if value_label is not None:
-        x_span = ax.get_xlim()[1] - ax.get_xlim()[0]
-        txt = ax.text(rel_x + x_span * 0.015, y_pos, value_label, color=style["face"],
-                       fontsize=8.2, ha="left", va="center", zorder=11, clip_on=True)
-        txt.set_path_effects([pe.withStroke(linewidth=1.8, foreground="#2b2b2b")])
-
 
 def create_overshoot_safe_space_figure_by_region(
     all_scenarios_data, seuils_df, shares_df, scenario_names,
     unit_row=config.UNIT_ROW_ABS,
     ub_color="#bc270a", x_main_max=8.0, display_bounds=True,
-    show_pba=False, show_value_labels=True, show_value_bounds=True,
+    show_pba=False, show_value_overshoot=False, show_value_bounds=True,
     title_above_bar=False,
     title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
@@ -821,6 +872,14 @@ def create_overshoot_safe_space_figure_by_region(
             lignes) pour contenir la bulle la plus à droite de la figure.
             Une ligne sans Upper Safe Bound (ou avec UB <= Safe Limit) garde
             l'échelle 1L.
+        show_value_overshoot: si True, chaque barre reçoit son propre axe
+            "nL" juste au-dessus d'elle, au lieu de l'axe unique en haut de la
+            figure (le titre de la barre est décalé au-dessus de cet axe).
+            Avec scale_UB=True, cet axe suit l'échelle propre à la ligne :
+            1L, puis des graduations à pas "rond" (ex. 1L, 100L, 200L... ou
+            1L, 2.5L, 5L...) en valeurs réelles, positionnées selon l'échelle
+            remise à l'UB -- comme les graduations par secteur de la figure
+            radiale. Sans scale_UB : graduations entières 1L, 2L, 3L...
         region_codes: optionnel, {nom_scénario: code EXIOBASE} pour forcer le
             rattachement d'un scénario à une ligne de shares_df, au lieu de le
             déduire de son nom.
@@ -916,8 +975,11 @@ def create_overshoot_safe_space_figure_by_region(
         min(MIN_ROW_HEIGHT_PER_SCENARIO_REGION * len(scenario_names), MAX_ROW_HEIGHT_FACTOR_REGION),
     )
     # hspace dimensionné pour que le bloc de titre (nom + unité) tienne
-    # toujours entre les deux écarts demandés, quels que soient leurs réglages.
-    hspace = (title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar else 0.12
+    # toujours entre les deux écarts demandés, quels que soient leurs réglages
+    # (+ l'axe "nL" propre à chaque barre si show_value_overshoot).
+    value_axis_extra = VALUE_AXIS_BLOCK_HEIGHT if show_value_overshoot else 0.0
+    hspace = ((title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar
+              else 0.12) + value_axis_extra
     fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
     gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
@@ -959,6 +1021,14 @@ def create_overshoot_safe_space_figure_by_region(
                 return x * config.SAFE_LIMIT_REL
             return config.SAFE_LIMIT_REL + (x - 1) * ub_slope
 
+        def unscaled(x):
+            """Inverse de scaled (abscisse affichée -> valeur réelle en nL)."""
+            if x is None or ub_slope is None:
+                return x
+            if x <= config.SAFE_LIMIT_REL:
+                return x / config.SAFE_LIMIT_REL
+            return 1 + (x - config.SAFE_LIMIT_REL) / ub_slope
+
         # Calcul des positions relatives (CBA, et PBA si demandé) par scénario
         points = []
         for scenario_idx, scenario_data in enumerate(all_scenarios_data):
@@ -993,7 +1063,7 @@ def create_overshoot_safe_space_figure_by_region(
             })
 
         return {"budgets": budgets, "ref_lb": ref_lb, "lower_rel": lower_rel, "ub_rel": ub_rel,
-                "scaled": scaled, "points": points}
+                "scaled": scaled, "unscaled": unscaled, "points": points}
 
     rows = {name: compute_row(name) for name in subprocesses}
 
@@ -1012,6 +1082,7 @@ def create_overshoot_safe_space_figure_by_region(
             x_axis_max = max(x_main_max, max(all_row_x) * 1.04)
 
     top_main_ax = None
+    value_axes = []
 
     for row_idx, subprocess_name in enumerate(subprocesses):
         ax = fig.add_subplot(gs[row_idx, :] if scale_UB else gs[row_idx, 0])
@@ -1099,8 +1170,7 @@ def create_overshoot_safe_space_figure_by_region(
             if p["rel_cba_min"] is not None:
                 _plot_sensitivity_segment(target_ax_cba, p["rel_cba_min"], p["rel_cba_max"], p["y_pos"],
                                            color="white")
-            _plot_region_bubble(target_ax_cba, p["rel_cba"], p["y_pos"], style, hatched=False,
-                                 value_label=_fmt_abs(p["abs_cba"]) if show_value_labels else None)
+            _plot_region_bubble(target_ax_cba, p["rel_cba"], p["y_pos"], style, hatched=False)
 
             if p["rel_pba"] is not None:
                 hatch_color = "white" if "trend" in p["sname"].lower() else "black"
@@ -1110,8 +1180,7 @@ def create_overshoot_safe_space_figure_by_region(
                     _plot_sensitivity_segment(target_ax_pba, p["rel_pba_min"], p["rel_pba_max"], p["y_pos"],
                                                color="black")
                 _plot_region_bubble(target_ax_pba, p["rel_pba"], p["y_pos"], style, hatched=True,
-                                     hatch_color=hatch_color,
-                                     value_label=_fmt_abs(p["abs_pba"]) if show_value_labels else None)
+                                     hatch_color=hatch_color)
 
         # Étiquettes de code à gauche de la barre : remplace la légende "1
         # entrée par scénario" par un court libellé (le code région) aligné sur
@@ -1133,7 +1202,7 @@ def create_overshoot_safe_space_figure_by_region(
         # aussi la place aux graduations de l'axe X partagé au-dessus d'elle.
         if title_above_bar:
             _draw_lp_title_above(ax, subprocess_name, unit_text, 1.0 + hspace,
-                                  title_gap_below_bar, title_gap_above_bar)
+                                  title_gap_below_bar + value_axis_extra, title_gap_above_bar)
         else:
             ax.text(-0.03, 0.57, subprocess_name, transform=ax.transAxes, ha="right", va="center",
                     fontsize=13, fontweight="bold")
@@ -1158,21 +1227,44 @@ def create_overshoot_safe_space_figure_by_region(
                 # Échelle propre à chaque ligne : pas de graduation "nL" commune.
                 axis.set_xticks([])
 
-        if row_idx != 0:
-            ax.tick_params(axis="x", labeltop=False, top=False)
-        if use_break and ax_ext.get_visible():
-            ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
+        if show_value_overshoot:
+            # Axe "nL" propre à chaque barre, juste au-dessus d'elle. Avec
+            # scale_UB : graduations à pas "rond" en valeurs réelles (de 1L à la
+            # valeur réelle au bord droit de l'axe), positionnées par scaled()
+            # -- comme les graduations par secteur de la figure radiale.
+            if scale_UB:
+                ticks = _regular_rel_ticks(row["unscaled"](x_axis_max))
+                positions = [scaled(t) for t in ticks]
+            else:
+                ticks = list(range(1, int(x_axis_max) + 1))
+                positions = ticks
+            _draw_bar_value_axis(ax, ticks, positions)
+            value_axes.append(ax)
+            if use_break and ax_ext.get_visible():
+                ax_ext.spines["top"].set_position(("axes", 1.0))
+                ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=VALUE_AXIS_TICK_LABEL_FONTSIZE,
+                                   length=3, pad=1.5)
+                value_axes.append(ax_ext)
+        else:
+            if row_idx != 0:
+                ax.tick_params(axis="x", labeltop=False, top=False)
+            if use_break and ax_ext.get_visible():
+                ax_ext.tick_params(axis="x", labeltop=True, top=True, labelsize=AXIS_TICK_LABEL_FONTSIZE, length=3, pad=2)
 
     # Axe X principal commun (1L, 2L, 3L...) + labels de zone, sur la 1ère ligne
-    # (scale_UB=True : labels de zone seuls, l'axe "nL" n'a plus de sens commun)
+    # (scale_UB=True ou show_value_overshoot=True : labels de zone seuls --
+    # pas d'axe "nL" commun)
     if top_main_ax is not None:
         top_spine_y = (1.0 + hspace + 0.03) if title_above_bar else 1.03
-        if not scale_UB:
+        if not scale_UB and not show_value_overshoot:
             top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
             top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
             top_main_ax.spines["top"].set_position(("axes", top_spine_y))
             top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
-        zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
+        if show_value_overshoot:
+            zone_label_y = (1.0 + hspace + 0.05) if title_above_bar else (1.0 + value_axis_extra + 0.05)
+        else:
+            zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
         for txt, color, x_pos in [
             ("Safe Operating Space", "#0b7d3e", 0.00),
             ("Increasing Risk", "#d47818", 0.20),
@@ -1215,5 +1307,7 @@ def create_overshoot_safe_space_figure_by_region(
         # déplacée plus haut) et leur fait perdre le gras appliqué via
         # set_xticklabels ; on le réapplique donc en tout dernier.
         plt.setp(top_main_ax.get_xticklabels(), fontweight="bold")
+    for axis in value_axes:
+        plt.setp(axis.get_xticklabels(), fontweight="bold")
 
     return fig

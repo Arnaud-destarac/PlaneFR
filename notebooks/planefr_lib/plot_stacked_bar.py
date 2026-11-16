@@ -95,7 +95,8 @@ def _build_category_legend(categories):
 def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                               scenario_name="", reference_data=None, ax=None, show_legend=True,
                               group_by_category=True, sharing_principle=None, pop_df=None,
-                              shares_df=None, epc_reference="region", use_2019_seuils=None):
+                              shares_df=None, epc_reference="region", use_2019_seuils=None,
+                              show_values=True):
     """Barres empilées en % représentant les LP par sous-processus : dom (plein) +
     imp (hachuré) empilés par catégorie de consommation. Annote le total absolu,
     la variation relative au scénario de référence (si fourni), et le dépassement
@@ -132,6 +133,11 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
             emissions" (comme la figure par région, qui ne montre que des
             scénarios 2019) ; False pour garder "GHG emissions". None (défaut) :
             True si scenario_name contient "2019" (ex. "2019_FR"), False sinon.
+        show_values: True (défaut) pour annoter le total absolu au-dessus de
+            chaque barre et le niveau de dépassement du seuil bas juste en
+            dessous du haut de la barre ; False masque ces deux annotations
+            (et l'entrée "Overshoot" de la légende). La variation relative au
+            scénario de référence reste affichée.
 
     Returns:
         (fig, ax) si ax=None a été fourni en entrée, sinon (None, ax).
@@ -198,9 +204,10 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
     for idx, total_val in enumerate(total_values):
         sp = subprocesses[idx]
 
-        unit_val = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, sp)
-        ax.text(idx, 102, f"{total_val:.0f}{f' {unit_val}' if unit_val else ''}",
-                ha="center", va="bottom", fontweight="bold", fontsize=10.5)
+        if show_values:
+            unit_val = processing.lookup_first_text(seuils_df, config.UNIT_ROW_ABS, sp)
+            ax.text(idx, 102, f"{total_val:.0f}{f' {unit_val}' if unit_val else ''}",
+                    ha="center", va="bottom", fontweight="bold", fontsize=10.5)
 
         if reference_data is not None and sp in reference_data:
             ref_total = reference_data[sp]["domestique"].sum() + reference_data[sp]["importé"].sum()
@@ -209,6 +216,8 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
                 text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
                 ax.text(idx, 97, text_var, ha="center", va="bottom", fontweight="bold", fontsize=11, color="black")
 
+        if not show_values:
+            continue
         if is_epc:
             threshold = _epc_threshold(seuils_df, shares_df, sp, "lb", epc_reference,
                                        use_2019_seuils=use_2019_seuils)
@@ -232,8 +241,9 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
     if show_legend:
         handles, labels = _build_category_legend(categories)
-        handles.append(Line2D([0], [0], marker="$2.5$", color="red", linestyle="None", markersize=13))
-        labels.append("Overshoot")
+        if show_values:
+            handles.append(Line2D([0], [0], marker="$2.5$", color="red", linestyle="None", markersize=13))
+            labels.append("Overshoot")
         ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.05, 1), fontsize=13)
 
     if fig is not None:
@@ -244,12 +254,12 @@ def create_stacked_bar_chart(data_by_subprocess, seuils_df, subprocess_to_lp,
 
 def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list, scenario_names,
                              group_by_category=True, sharing_principle=None, pop_df=None,
-                             shares_df=None):
+                             shares_df=None, show_values=True):
     """Grille de create_stacked_bar_chart pour tous les scénarios (2 colonnes,
     autant de lignes que nécessaire), avec légende et titre communs.
 
     Args:
-        group_by_category: voir create_stacked_bar_chart
+        group_by_category, show_values: voir create_stacked_bar_chart
         sharing_principle, pop_df, shares_df: voir create_stacked_bar_chart.
             Avec sharing_principle="EPC", les limites sont celles de
             create_radial_synthesis_figure (« UN – EPC 2050 », sauf GHG
@@ -285,7 +295,7 @@ def create_synthesis_figure(all_scenarios_data, seuils_df, subprocess_to_lp_list
             reference_data=None if is_reference else reference_data,
             ax=ax, show_legend=False, group_by_category=group_by_category,
             sharing_principle=sharing_principle, pop_df=pop_df,
-            shares_df=shares_df, epc_reference="radial",
+            shares_df=shares_df, epc_reference="radial", show_values=show_values,
         )
 
     all_categories = set()
@@ -402,7 +412,17 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
     reference_idx = config.REFERENCE_SCENARIO_IDX
     axes_list = []
     legend_categories = set()
-    dls_levels_found = {key: False for key, _, _, _ in config.DLS_LEVELS}  # niveaux DLS tracés (légende)
+    # Niveaux DLS : (clé, ligne de la feuille DLS, couleur, libellé, portée).
+    # Groupe 2050 : DLS de l'année de base sur la barre Base year uniquement,
+    # DLS 2050 sur les autres scénarios (comme la synthèse radiale). Groupe
+    # Base_year : les 3 niveaux, sur toutes les barres.
+    if scenario_group == config.DLS_BASE_YEAR_GROUP:
+        dls_levels = [(key, "DLS" + suffix, color, "DLS Base year" + label[len("DLS"):], "all")
+                      for key, suffix, color, label in config.DLS_LEVELS]
+    else:
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "ref"),
+                      ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "others")]
+    dls_levels_found = {key: False for key, *_ in dls_levels}  # niveaux DLS tracés (légende)
 
     def _finalize_subplot(ax, ax_top, use_break, top, pba_values, total_values):
         """Deuxième passe (après alignement du 0 % sur la ligne) : fixe la
@@ -435,7 +455,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         if show_values:
             ref_total = total_values[reference_idx]
             ref_pba = pba_values[reference_idx]
-            ax_margin = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02
+            ax_margin = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05
             # Superposition jugée réelle seulement si la croix PBA est sur le même
             # axe que la barre (pas de conflit possible si elle est sur ax_top, au-
             # delà de la rupture d'axe) ET proche du total en distance absolue sur
@@ -445,11 +465,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
             for scenario_idx, total_val in enumerate(total_values):
                 pba_val = pba_values[scenario_idx]
                 pba_ax = pba_axes[scenario_idx]
-                overlapping = (
-                    pba_ax is ax and pba_val is not None and np.isfinite(pba_val)
-                    and abs(pba_val - total_val) < overlap_threshold
-                )
-                cba_y, cba_va = (pba_val - ax_margin, "top") if overlapping else (total_val + ax_margin, "bottom")
+                cba_y, cba_va = total_val + ax_margin, "bottom"
 
                 if scenario_idx == reference_idx:
                     ax.text(scenario_idx, cba_y, f"{total_val:.0f}",
@@ -457,26 +473,25 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
                 elif ref_total > 0:
                     variation_pct = (total_val - ref_total) / ref_total * 100
                     text_var = f"+{variation_pct:.0f}%" if variation_pct > 0 else f"{variation_pct:.0f}%"
-                    var_color = "red" if variation_pct > 0 else ("green" if variation_pct < 0 else "black")
+                    var_color = "black" if variation_pct > 0 else ("black" if variation_pct < 0 else "black")
                     ax.text(scenario_idx, cba_y, text_var,
                             ha="center", va=cba_va, fontweight="bold", fontsize=15, color=var_color, zorder=13)
 
-                # Texte PBA (total pour la référence, variation relative à la
-                # référence pour les autres), toujours au-dessus de la croix.
+                # Texte PBA (variation relative à la référence uniquement, pas
+                # de total pour la référence), sous la croix.
                 if pba_val is None or not np.isfinite(pba_val) or pba_ax is None:
                     continue
-                pba_margin = (pba_ax.get_ylim()[1] - pba_ax.get_ylim()[0]) * 0.02
-                pba_y = pba_val + pba_margin
+                pba_margin = (pba_ax.get_ylim()[1] - pba_ax.get_ylim()[0]) * 0.05
+                pba_y = pba_val - pba_margin
 
                 if scenario_idx == reference_idx:
-                    pba_ax.text(scenario_idx, pba_y, f"{pba_val:.0f}",
-                                ha="center", va="bottom", fontweight="bold", style="italic", fontsize=15, color="black", zorder=13)
+                    pass  # total PBA de la référence non affiché
                 elif ref_pba is not None and np.isfinite(ref_pba) and ref_pba > 0:
                     pba_variation_pct = (pba_val - ref_pba) / ref_pba * 100
                     pba_text_var = f"+{pba_variation_pct:.0f}%" if pba_variation_pct > 0 else f"{pba_variation_pct:.0f}%"
-                    pba_var_color = "#9c0000" if pba_variation_pct > 0 else ("#005e00" if pba_variation_pct < 0 else "black")
+                    pba_var_color = "black" if pba_variation_pct > 0 else ("black" if pba_variation_pct < 0 else "black")
                     pba_ax.text(scenario_idx, pba_y, pba_text_var,
-                                ha="center", va="bottom", fontweight="bold", style="italic", fontsize=15, color=pba_var_color, zorder=13)
+                                ha="center", va="top", fontweight="bold", style="italic", fontsize=15, color=pba_var_color, zorder=13)
 
     row_items = []
 
@@ -525,11 +540,10 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", subprocess_name)
         threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", subprocess_name)
         # DLS (et ses bornes), par clé de config.DLS_LEVELS ; None si absent pour ce LP
-        dls_values = {key: None for key, _, _, _ in config.DLS_LEVELS}
+        dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
-            dls_prefix = "DLS" if scenario_group == config.DLS_BASE_YEAR_GROUP else "DLS 2050"
-            for key, suffix, _, _ in config.DLS_LEVELS:
-                dls_values[key] = processing.lookup_dls(dls_df, dls_prefix + suffix, subprocess_name)
+            for key, dls_row, *_ in dls_levels:
+                dls_values[key] = processing.lookup_dls(dls_df, dls_row, subprocess_name)
         threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
 
         if not show_thresholds:
@@ -654,11 +668,33 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         if threshold_ub is not None:
             (ax_top if (use_break_ub and ax_top is not None) else ax).axhline(
                 y=threshold_ub, color="#bc270a", linestyle="-", linewidth=2.5, label="Upper Safe Bound", zorder=10)
-        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+        for key, _, dls_color, dls_label, scope in dls_levels:
             if dls_values[key] is not None:
                 dls_levels_found[key] = True
-                ax.axhline(y=dls_values[key], color=dls_color, linestyle="--", linewidth=2.5,
-                           label=dls_label, zorder=10)
+                if scope == "all":
+                    ax.axhline(y=dls_values[key], color=dls_color, linestyle="--", linewidth=2.5,
+                               label=dls_label, zorder=10)
+                    continue
+                # Trait limité à la barre Base year ("ref") ou aux autres scénarios
+                # ("others") : du bord de l'axe jusqu'à toucher la barre voisine
+                # (demi-largeur de barre). Ajouté via add_artist (et non ax.plot)
+                # pour ne pas modifier les limites de données de l'axe : les
+                # bornes ±10 sont simplement coupées au bord de l'axe.
+                # Bords des barres voisines de la barre Base year.
+                ref_left = reference_idx - 1 + bar_width / 2
+                ref_right = reference_idx + 1 - bar_width / 2
+                x_min = -10 if reference_idx == 0 else ref_left
+                if scope == "ref":
+                    spans = [(x_min, ref_right)]
+                else:
+                    spans = [(ref_right, n_scenarios + 10)]
+                    if reference_idx > 0:
+                        spans.insert(0, (-10, ref_left))
+                for x0, x1 in spans:
+                    dls_line = Line2D([x0, x1], [dls_values[key]] * 2, color=dls_color, linestyle="--",
+                                      linewidth=2.5, zorder=10, transform=ax.transData)
+                    ax.add_artist(dls_line)
+                    dls_line.set_clip_path(ax.patch)
 
         bottom_max = max(max_total, *(v for v in dls_values.values() if v is not None), max_pba)
         if show_variation_bars:
@@ -750,7 +786,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, seuils_df, subprocess_to_l
         legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
         legend_labels.append("Production-based")
     if show_dls and dls_df is not None and show_thresholds:
-        for key, _, dls_color, dls_label in config.DLS_LEVELS:
+        for key, _, dls_color, dls_label, _ in dls_levels:
             if dls_levels_found[key]:
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3))
                 legend_labels.append(dls_label)
