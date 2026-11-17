@@ -1,8 +1,8 @@
-# PlanéFR module — technical reference documentation
+# PlaneFR module — technical reference documentation
 
-This document describes the PlaneFR module, which assesses the environmental pressures of France against the planetary boundaries using the MatMat input-output model. It is written for two audiences: MatMat developers, who need to integrate the module into the model, and future users, who need to rerun the computations and adapt them.
+This document describes the PlaneFR module, which assesses the environmental pressures of France against the planetary boundaries using the MatMat input-output model. 
 
-It describes the state of the code on 17 November 2026. Its content is taken from the code and data files only.
+It describes the state of the code on 17 November 2026.
 
 ## Contents
 
@@ -38,9 +38,9 @@ The computation relies on three building blocks, spread over three repositories:
 The code distinguishes two levels, which helps when reading the scripts:
 
 - the **extension** is the MatMat satellite account (`land`, `water`, `nutrients`…). In `planefr_lib` it is called `lp_name` and corresponds to the "EXIOBASE groups" column of `characterization_factors.xlsx`;
-- the **sub-process** is the indicator shown in the figures ("N surplus", "GHG emissions"…), i.e. the "Indicators" column of the same file and a column of `thresholds.xlsx`. A sub-process can aggregate several extensions.
+- the **Indicator** is what is shown in the figures ("N surplus", "GHG emissions"…), i.e. the "Indicators" column of `characterization_factors.xlsx` and a column of `thresholds.xlsx`. An indicator can aggregate several extensions.
 
-| Sub-process | Extensions used | Figure unit |
+| Indicator | Extensions used | Figure unit |
 |---|---|---|
 | GHG emissions | `ghg_emissions`, `ghg_combustion` | MtCO2eq |
 | N surplus | `nutrients`, `air_emissions` | Gg |
@@ -52,7 +52,7 @@ The code distinguishes two levels, which helps when reading the scripts:
 | Biodiversity loss - PDF | `air_emissions`, `ghg_emissions`, `ghg_combustion`, `land`, `nutrients`, `water` | Md PDF.m2.yr |
 | Biodiversity loss - HANPP | `land`, `raw_materials` | MtC |
 
-The `energy` and `deforestation` extensions are extracted and computed by the model, but no sub-process uses them at present.
+The `energy` and `deforestation` extensions are extracted and computed by the model, but no indicator uses them at present.
 
 ### Scenarios
 
@@ -110,7 +110,7 @@ flowchart TD
     CALIB["ADEME France calibration<br/>3.10.2_France_2015 / 2019"] --> CAL
     CAL --> FR["France accounts"]
     T2050["Transition(s) 2050 shocks<br/>dA, dY, dY_k"] --> ENGF["eeio engine, France"]
-    MAN["Manual shocks<br/>my_manual_param.xlsx"] --> ENGF
+    MAN["Manual shocks<br/>my_manual_param.xlsx, dS"] --> ENGF
     FR --> ENGF
     ENGF --> OUT["Results by scenario<br/>Module_PlaneFR/data/"]
     WS --> REF["Reformatting scripts"]
@@ -123,14 +123,42 @@ flowchart TD
 
 ### Where the files are
 
-The `data/` folder of `matmat-ademe` is excluded from git (`**/data/` in `.gitignore`). The pipeline parameter files it contains are therefore **not versioned**: JSON settings, bridge matrices, manual shocks.
+In `matmat-ademe`, everything specific to PlanéFR is in the `planeFR/` folder, which is versioned: the pipeline scripts and their parameters. The data, accounts and outputs stay in `data/4-PlaneFR/`, which is excluded from git like the whole `data/` folder (`**/data/` in `.gitignore`).
+
+```
+matmat-ademe/
+├── planeFR/                  versioned
+│   ├── scripts/              pipeline scripts (Python and PowerShell), one folder per step
+│   │   ├── _common/              shared paths and helpers
+│   │   ├── 0-chains/             chains of steps (run_full_pipeline.ps1...)
+│   │   ├── 1-exiobase3_eeio/     EXIOBASE adapter, World engine, F_Y extraction
+│   │   ├── 2-gmrio_to_snac_s/    France SNAC accounts, shock extension folders
+│   │   ├── 3-update_calib_fr/    merge with the France calibration
+│   │   ├── 4-engine/             France and World engines
+│   │   ├── 5-reformat/           World/Europe/region aggregates, harmonized extensions
+│   │   ├── 6-scenario_groups/    display groups
+│   │   ├── a-manual_shocks/      manual shocks on French domestic pressures
+│   │   ├── b-ssp_shocks/         rest-of-world shocks from IMAGE
+│   │   └── c-agri_shocks/        agri-food variants of the shocks
+│   ├── parameters/           settings templates, bridge matrices, manual shocks
+│   │   ├── 1-exiobase3_eeio/ … 4-engine/   templates and bridges of each MatMat step
+│   │   └── a-manual_shocks/      my_manual_param.xlsx
+│   └── .gitignore
+└── data/4-PlaneFR/           not versioned
+    ├── 1-accounts/
+    ├── 2-shocks/
+    ├── Outputs/
+    ├── Outputs_inter/
+    └── Settings_run/         settings files generated at each run
+```
 
 | Location | Content | Versioned |
 |---|---|---|
 | `matmat-ademe/src/matmat/` | MatMat source code, including the five modified files | yes |
-| `matmat-ademe/scripts/` | 9 Python scripts and 11 PowerShell scripts of the PlaneFR pipeline | yes |
+| `matmat-ademe/planeFR/scripts/` | 13 Python scripts and 12 PowerShell scripts of the PlaneFR pipeline, in step folders | yes |
+| `matmat-ademe/planeFR/parameters/` | Settings templates (JSON), bridge matrices, manual shocks | yes |
 | `matmat-ademe/data/01-sources_public/exiobase/<version>/` | EXIOBASE archives `IOT_<year>_pxp.zip` | no |
-| `matmat-ademe/data/4-PlaneFR/Settings/` | JSON settings, bridge matrices, manual shocks | no |
+| `matmat-ademe/data/4-PlaneFR/Settings_run/` | Settings files generated from the templates at each run | no |
 | `matmat-ademe/data/4-PlaneFR/1-accounts/` | EXIOBASE accounts in MatMat format | no |
 | `matmat-ademe/data/4-PlaneFR/2-shocks/` | Scenario shocks | no |
 | `matmat-ademe/data/4-PlaneFR/Outputs/`, `Outputs_inter/` | Computed accounts (World, France) and intermediate outputs | no |
@@ -138,6 +166,10 @@ The `data/` folder of `matmat-ademe` is excluded from git (`**/data/` in `.gitig
 | `Module_PlaneFR/notebooks/planefr_lib/` | Post-processing library | yes |
 | `Module_PlaneFR/notebooks/*.ipynb` | Figure notebooks | yes |
 | `Module_PlaneFR/figures/` | Figures and workbooks produced | yes |
+
+The parameters folder must not be named `settings` or placed under `data/`: both are excluded by MatMat's `.gitignore` (the `settings/` rule applies at any depth and, on Windows, regardless of case).
+
+> **Possible improvement — results in git.** `Module_PlaneFR` versions its model results (`data/3.11.2/`, about 8,800 pickles), which can all be regenerated. Git handles large binary files poorly: the repository grows at each run. Git LFS, or publishing the results separately (e.g. on Zenodo, as MatMat does), would keep it light.
 
 ---
 
@@ -156,6 +188,8 @@ The `update_calib_fr` pipeline does not exist in the public `matmat-ademe` repos
 
 The pandas version gap between environments has a practical consequence: a pickle written with pandas 3 cannot be read with pandas 2 when it contains strings of type `StringDtype`. § 4.4 describes the fix.
 
+> **Possible improvement — a single environment.** Porting `update_calib_fr` into `matmat-ademe` would remove the detour through the `datapack` environment, and aligning the pandas versions of `matmat-ademe` and `Module_PlaneFR` would make the pickle workaround of § 4.4 unnecessary. The pipeline would then run in one environment.
+
 ### Configuration
 
 Both `config.toml` files (`matmat-ademe` and `datapack`) must point to the same data folder, that of `matmat-ademe`:
@@ -168,25 +202,29 @@ settings_dir = "C:/Users/<user>/.../Code/MatMat/matmat-ademe/settings"
 
 All relative paths in the JSON settings (`.\4-PlaneFR\...`) are resolved against `data_dir`.
 
-### Absolute paths to adapt
+### Paths
 
-Several files contain an absolute path to the development machine (`C:\Users\Arnaud\Documents\CIRED\PlaneFR\Code\...`). They must be changed before running on another machine.
+The pipeline scripts contain no path specific to a machine, so the repository works for anyone who clones it. All the paths are fixed relative to the repository. The Python scripts take them from [planeFR/scripts/_common/planefr_paths.py](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_paths.py) and the PowerShell scripts from [planeFR/scripts/_common/planefr_common.ps1](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_common.ps1), which both derive them from their own location:
 
-| File | Constant or key |
+| Constant | Value |
 |---|---|
-| `scripts/compute_ds_x_dom.py` | `MODULE_PLANEFR_DIR`, `MATMAT_DIR` (reused by `generate_shock_dS.py` and `generate_shock_agri.py`) |
-| `scripts/extract_S_SSPs.py`, `scripts/export_dS.py` | `MODULE_PLANEFR_DIR` |
-| `scripts/reformat_d_cba_monde_europe.py` | `DATA_DIR` |
-| `scripts/reformat_d_cba_k.py` | `INPUT` |
-| `data/4-PlaneFR/Settings/4-engine/settings_engine_France_shocks.json` | `path_out` |
-| `matmat-ademe/config.toml`, `datapack/config.toml` | `data_dir`, `settings_dir` |
+| `PLANEFR_DIR`, `MATMAT_DIR` | `matmat-ademe/planeFR/`, `matmat-ademe/` |
+| `PARAMETERS_DIR` | `matmat-ademe/planeFR/parameters/` |
+| `MATMAT_DATA_DIR`, `PLANEFR_DATA_DIR` | `matmat-ademe/data/`, `matmat-ademe/data/4-PlaneFR/` |
+| `MODULE_PLANEFR_DIR` | `<root>/Module_PlaneFR/`, or the `PLANEFR_MODULE_DIR` environment variable |
+| `DATA_VERSION_DIR` | `Module_PlaneFR/data/<PLANEFR_EXIOBASE_VERSION>/` |
 
-`planefr_lib`, `data/budget_shares.py` and `ademe_eemrio` only use relative paths, but they assume the tree of § 2: `planefr_lib.config.BDF_FILE` looks in `../Github/ademe_eemrio/`, and `export_impacts_coicop.py` looks in `../../Module_PlaneFR/notebooks`.
+`run_engine_batch.ps1` locates `Module_PlaneFR` the same way. The only files holding machine-specific absolute paths are the two `config.toml` files (`data_dir`, `settings_dir`), which are local by design, and the settings files generated in `data/4-PlaneFR/Settings_run/` at each run.
+
+Each Python script of a step folder adds `_common` to its import path (`sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_common"))`), then imports `planefr_paths` and, if needed, `planefr_utils` (`make_pickle_portable`). `planefr_paths.get_ssp_base_accounts_dir()` gives the base accounts of the SSP shocks (§ 5.3). Each PowerShell script dot-sources `..\_common\planefr_common.ps1`; the chains call the other scripts through `$PlanefrScriptsDir`, e.g. `Join-Path $PlanefrScriptsDir "4-engine\run_engine_batch.ps1"`.
+
+`planefr_lib`, `data/budget_shares.py` and `ademe_eemrio` only use relative paths too, and assume the same tree of § 2: `planefr_lib.config.BDF_FILE` looks in `../Github/ademe_eemrio/`, and `export_impacts_coicop.py` looks in `../../Module_PlaneFR/notebooks`.
 
 ### Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
+| `PLANEFR_MODULE_DIR` | `<root>/Module_PlaneFR` | Location of `Module_PlaneFR`, if it is not next to the `MatMat` folder. Read by `_common/planefr_paths.py` and `4-engine/run_engine_batch.ps1`. |
 | `PLANEFR_EXIOBASE_VERSION` | `3.11.2` | EXIOBASE version read by the Python pipeline scripts and by `planefr_lib.config`. Set by the PowerShell scripts from their `-Version` parameter. |
 | `PLANEFR_SCENARIO_GROUP` | `no_SSP` | Scenario group read by default by `planefr_lib`. |
 | `PLANEFR_FIGURES_DIR` | `Module_PlaneFR/figures` | Output folder of the figures. Useful to test a notebook without overwriting the existing figures. |
@@ -305,15 +343,32 @@ def export(self, df: pd.DataFrame, path: str, file_name: str):
 
 The serialized form of `StringDtype` is not stable across pandas versions. Since pandas 3.0, strings get this type by default, and a pickle written that way cannot be read with pandas 2.x. Yet the shocks are produced by scripts that may run under pandas 3, then read by the engine under pandas 2.2.2.
 
-The same function is duplicated as `make_pickle_portable` in `scripts/compute_ds_x_dom.py`, for the scripts that write pickles without going through `PickleFormat`.
+The same function is duplicated as `make_pickle_portable` in `planeFR/scripts/_common/planefr_utils.py`, for the scripts that write pickles without going through `PickleFormat`. The scripts could import the MatMat version instead.
+
+### 4.5 Integration work left
+
+Several pipeline scripts repair or complete MatMat outputs after the fact. Moving these treatments into MatMat would make PlanéFR a module of the model rather than a layer on top of it.
+
+| Script | What it works around | Where it would belong |
+|---|---|---|
+| `extract_f_y_tot.py` | `F_Y` is not part of the accounts written by the adapter; the script replays the adapter by calling its private methods (`_resolve_extension_names`, `_raw_extensions`) | Export of `F_Y` by the `exiobase3_eeio` adapter |
+| `reformat_d_cba_monde_europe.py` | Single-level MultiIndex left by `cast_index_to_multiindex()`; World, EU27 and regional aggregates | Index fix in the extraction; aggregation pipeline of MatMat |
+| `reformat_d_cba_k.py` | Different formats of the GHG and raw-material extensions of the France calibration | Harmonization of the calibration extensions in `update_calib_fr` |
+| `run_update_calib_fr_batch*.ps1` | `update_calib_fr` only exists in the `datapack` wheel | Port of the pipeline to `matmat-ademe` (§ 3) |
 
 ---
 
 ## 5. Computation chain in matmat-ademe
 
-The pipeline is driven by PowerShell scripts that edit the JSON settings files, then call the MatMat command line or a Python script. All are in [matmat-ademe/scripts/](../../MatMat/matmat-ademe/scripts/).
+The pipeline is driven by PowerShell scripts that prepare a settings file for each run, then call the MatMat command line or a Python script. All are in [matmat-ademe/planeFR/scripts/](../../MatMat/matmat-ademe/planeFR/scripts/).
 
-The PowerShell scripts **rewrite the JSON files at each iteration**. After a run, a settings file therefore contains the paths of the last scenario processed, not a reference configuration.
+**Settings templates.** The JSON files of `planeFR/parameters/` are templates: the scripts never modify them. For each run, a script reads a template (`Read-SettingsTemplate`), sets the paths of that run (accounts, shock, output), then writes the result under `data/4-PlaneFR/Settings_run/`, with the same relative path (`Write-RunSettings`). That generated file is passed to `matmat.cli`. Both functions are in `planefr_common.ps1`.
+
+In the templates, the token `{parameters}` stands for the `planeFR/parameters/` folder, e.g. `"bridges": "{parameters}\\2-gmrio_to_snac_s\\bridge_matrices.xlsx"`. It is replaced by the absolute path of that folder in the generated file. The other paths of the templates (accounts, shocks, outputs) remain relative to the `data_dir` of `config.toml`, as MatMat expects: both MatMat versions resolve them with `Path(data_dir).joinpath(value)`.
+
+To change a calculation parameter, such as `m_row_mode` or the list of extensions, edit the template: the next runs use it. The paths of accounts, shocks and outputs in the templates are only examples or starting points, overwritten by the scripts.
+
+> **Possible improvement — orchestration.** The PowerShell scripts only run on Windows, whereas MatMat is also developed on Linux, and they duplicate helpers (`Set-YearInPath`, `Add-Suffix`). A single Python command with sub-commands (`full`, `from-engine`, `ssp`, `agri`) would be cross-platform and testable.
 
 ### 5.1 Three chains
 
@@ -324,23 +379,23 @@ The PowerShell scripts **rewrite the JSON files at each iteration**. After a run
 | `run_all_SSPs.ps1` | French scenarios on a rest of the world projected by IMAGE | `run_full_pipeline.ps1` already run |
 | `run_all_SSPs_agri.ps1` | Variant restricted to the agri-food system | `run_all_SSPs.ps1` already run |
 
-Each chain stops at the first failing step. The batch scripts, however, report the failure of a scenario without interrupting their loop, except `run_gmrio_to_snac_s_batch.ps1` and `run_gmrio_to_snac_s_batch_SSPs.ps1`, which return an error code.
+Each chain stops at the first failing step. The batch scripts process all their scenarios even when one fails, so that all the failures are reported at once, then return exit code 1 if at least one run failed: the calling chain then stops.
 
 ### 5.2 Base chain: `run_full_pipeline.ps1`
 
-| Step | Script | Processing | Output (under `data/4-PlaneFR/` unless stated) |
-|---|---|---|---|
-| 0 | `run_exiobase3_eeio_batch.ps1` | `exiobase3_eeio` adapter for 2015 and 2019, then `eeio` engine on the world accounts | `1-accounts/Exiobase/<v>_<year>/` then `Outputs/World/Base_year_<year>/` |
-| 1 | `run_gmrio_to_snac_s_batch.ps1` | `gmrio_to_snac_s` pipeline: France accounts in SNAC format, imports separated | `Outputs_inter/gmrio_to_snac_s/<v>_pxp_<year>/` |
-| 1b | `rebuild_shock_extensions.py` | Rebuilds the extension folders of the `1-transitions_2050` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/` |
-| 2 | `run_update_calib_fr_batch.ps1` | `update_calib_fr` pipeline: adds the new extensions to the France calibration | `Outputs/France/Base_year_<year>/` |
-| 3 | `run_engine_batch.ps1` | France `eeio` engine: two base years, then one run per accounts × scenario pair | `Module_PlaneFR/data/<v>/...` |
-| 4 | `extract_f_y_tot.py` | Direct pressures of final demand, by region | `Outputs/World/Base_year_<year>/extensions/<ext>/F_Y_tot.pkl` |
-| 5 | `reformat_d_cba_monde_europe.py` | World, EU27 and regional aggregates; France `F_Y_tot` | `Module_PlaneFR/data/<v>/2019_*/` and every France scenario |
-| 6 | `reformat_d_cba_k.py` | Harmonizes the format of the GHG and materials extensions | Files rewritten in place |
-| 7 | `export_dS.py` | Exports the base-year production and pressures | `Module_PlaneFR/data/S_extraction.xlsx` |
-| 8 | `compute_ds_x_dom.py` | Computes the manual intensity shocks and applies the `F_Y_tot` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/dom_<ext>/dS_x_dom.pkl`, `F_Y_tot.pkl` of every scenario |
-| 9 | `run_pipeline_from_engine.ps1` | Second pass: steps 3 to 8 again, the engine applying the up-to-date `dS_x_dom` | Same as steps 3 to 8 |
+| Step | Folder | Script | Processing | Output (under `data/4-PlaneFR/` unless stated) |
+|---|---|---|---|---|
+| 0 | `1-exiobase3_eeio` | `run_exiobase3_eeio_batch.ps1` | `exiobase3_eeio` adapter for 2015 and 2019, then `eeio` engine on the world accounts | `1-accounts/Exiobase/<v>_<year>/` then `Outputs/World/Base_year_<year>/` |
+| 1 | `2-gmrio_to_snac_s` | `run_gmrio_to_snac_s_batch.ps1` | `gmrio_to_snac_s` pipeline: France accounts in SNAC format, imports separated | `Outputs_inter/gmrio_to_snac_s/<v>_pxp_<year>/` |
+| 1b | `2-gmrio_to_snac_s` | `rebuild_shock_extensions.py` | Rebuilds the extension folders of the `1-transitions_2050` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/` |
+| 2 | `3-update_calib_fr` | `run_update_calib_fr_batch.ps1` | `update_calib_fr` pipeline: adds the new extensions to the France calibration | `Outputs/France/Base_year_<year>/` |
+| 3 | `4-engine` | `run_engine_batch.ps1` | France `eeio` engine: two base years, then one run per accounts × scenario pair | `Module_PlaneFR/data/<v>/...` |
+| 4 | `1-exiobase3_eeio` | `extract_f_y_tot.py` | Direct pressures of final demand, by region | `Outputs/World/Base_year_<year>/extensions/<ext>/F_Y_tot.pkl` |
+| 5 | `5-reformat` | `reformat_d_cba_monde_europe.py` | World, EU27 and regional aggregates; France `F_Y_tot` | `Module_PlaneFR/data/<v>/2019_*/` and every France scenario |
+| 6 | `5-reformat` | `reformat_d_cba_k.py` | Harmonizes the format of the GHG and materials extensions | Files rewritten in place |
+| 7 | `a-manual_shocks` | `export_dS.py` | Exports the base-year production and pressures | `Module_PlaneFR/data/S_extraction.xlsx` |
+| 8 | `a-manual_shocks` | `compute_ds_x_dom.py` | Computes the manual intensity shocks and applies the `F_Y_tot` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/dom_<ext>/dS_x_dom.pkl`, `F_Y_tot.pkl` of every scenario |
+| 9 | `0-chains` | `run_pipeline_from_engine.ps1` | Second pass: steps 3 to 8 again, the engine applying the up-to-date `dS_x_dom`, then `build_scenario_groups.py` (§ 5.5) | Same as steps 3 to 8, display groups |
 
 **Why a second pass.** Step 8 computes intensity shocks that the engine, at step 3, must apply. But it needs the production of the 2050 scenarios, which is an output of step 3. The first pass therefore applies the `dS_x_dom` of the previous run, which step 1b keeps; the second pass (step 9) applies the ones just computed. One iteration is enough and gives an exact result: production depends on the shocks to the production system (`dA`, `dY`, `dY_k`), not on the intensity shocks.
 
@@ -354,7 +409,7 @@ The adapter reads the `IOT_<year>_pxp.zip` archive (product by product, 49 regio
 
 #### Step 1 — conversion to SNAC format
 
-The `gmrio_to_snac_s` pipeline, unmodified, turns the world accounts into single-country accounts. The bridge matrix `Settings/2-gmrio_to_snac_s/bridge_matrices.xlsx` defines France as the domestic region and aggregates the 48 other regions into one "import" origin.
+The `gmrio_to_snac_s` pipeline, unmodified, turns the world accounts into single-country accounts. The bridge matrix `planeFR/parameters/2-gmrio_to_snac_s/bridge_matrices.xlsx` defines France as the domestic region and aggregates the 48 other regions into one "import" origin.
 
 Each extension is split in two: `dom_<ext>` holds the pressures exerted in France, `imp_<ext>` holds the pressure content of imports (`M_RoW`). This content is computed with the `foreign_global_feedback` mode: the full world production system is used, but the direct pressures of France are set to zero. The trade loops between France and the rest of the world are thus taken into account without counting domestic pressures twice.
 
@@ -375,7 +430,7 @@ The `update_calib_fr` pipeline starts from the France accounts calibrated by ADE
 | France calibration (`older_accounts`) | `dom_ghg_emissions`, `dom_ghg_combustion`, `dom_raw_materials` |
 | EXIOBASE via `gmrio_to_snac_s` (`newer_accounts`) | `dom_` and `imp_` for `water`, `energy`, `land`, `nutrients`, `air_emissions`, `deforestation`; `imp_ghg_emissions`, `imp_raw_materials` |
 
-The new extensions are brought to the resolution of the France calibration by `Settings/3-update_calib_fr/bridge_matrices.xlsx`. When an extension exists in both sets of accounts, the pipeline keeps that of the France calibration.
+The new extensions are brought to the resolution of the France calibration by `planeFR/parameters/3-update_calib_fr/bridge_matrices.xlsx`. When an extension exists in both sets of accounts, the pipeline keeps that of the France calibration.
 
 The France calibration carries version number 3.10.2 and the new extensions version number 3.11.2: when `-Version` changes, the script only changes the `newer_accounts` path.
 
@@ -440,19 +495,19 @@ They are used to build the manual shocks and are described in § 6.1.
 
 This chain first projects the rest of the world to 2050, then redoes steps 1 to 3 on these projected world accounts.
 
-| Step | Script | Processing |
-|---|---|---|
-| 1 | `extract_S_SSPs.py` | Computes the 2050/2020 changes in pressures, activities and intensities in the IMAGE scenarios. |
-| 2 | `generate_shock_dS.py` | Turns these changes into MatMat shocks on the intensities (`dS_x_dom`) and on the technical coefficients (`dA`). |
-| 3 | `run_engine_batch_SSPs.ps1` | World `eeio` engine, one run per SSP scenario. Output: `Outputs/World/<SSP>_2050/`. |
-| 4 | `run_gmrio_to_snac_s_batch_SSPs.ps1` | `gmrio_to_snac_s` on each projected world. Output: `Outputs_inter/gmrio_to_snac_s/SSPs/<SSP>_2050/`. |
-| 5 | `run_update_calib_fr_batch_SSPs.ps1` | `update_calib_fr`. Output: `Outputs/France/<SSP>_2050/`. |
-| 6 | `run_engine_batch.ps1` | France engine: French scenarios on each set of accounts. |
+| Step | Folder | Script | Processing |
+|---|---|---|---|
+| 1 | `b-ssp_shocks` | `extract_S_SSPs.py` | Computes the 2050/2020 changes in pressures, activities and intensities in the IMAGE scenarios. |
+| 2 | `b-ssp_shocks` | `generate_shock_dS.py` | Turns these changes into MatMat shocks on the intensities (`dS_x_dom`) and on the technical coefficients (`dA`). |
+| 3 | `4-engine` | `run_engine_batch_SSPs.ps1` | World `eeio` engine, one run per SSP scenario. Output: `Outputs/World/<SSP>_2050/`. |
+| 4 | `2-gmrio_to_snac_s` | `run_gmrio_to_snac_s_batch_SSPs.ps1` | `gmrio_to_snac_s` on each projected world. Output: `Outputs_inter/gmrio_to_snac_s/SSPs/<SSP>_2050/`. |
+| 5 | `3-update_calib_fr` | `run_update_calib_fr_batch_SSPs.ps1` | `update_calib_fr`. Output: `Outputs/France/<SSP>_2050/`. |
+| 6 | `4-engine` | `run_engine_batch.ps1` | France engine: French scenarios on each set of accounts. |
 | 7 to 10 | `reformat_d_cba_monde_europe.py`, `reformat_d_cba_k.py`, `export_dS.py`, `compute_ds_x_dom.py` | As in the base chain. |
 
 Points specific to this chain:
 
-- **Single source for the base year of the SSP shocks.** The world accounts that the engine shocks are those of `path_in.accounts` in `settings_engine_SSPs.json`, which `run_engine_batch_SSPs.ps1` leaves unchanged (currently `Outputs\World\Base_year_2015`). `generate_shock_dS.py` and `generate_shock_agri.py` read the structure of the shocks (`S_x_dom`, `A`, `detail_levels.xlsx`, `base_year` of the `info.json` files) in the same folder, through `compute_ds_x_dom.get_ssp_base_accounts_dir()`. To change the base year, edit that key and rerun `run_all_SSPs.ps1`.
+- **Single source for the base year of the SSP shocks.** The world accounts that the engine shocks are those of `path_in.accounts` in `settings_engine_SSPs.json`, which `run_engine_batch_SSPs.ps1` leaves unchanged (currently `Outputs\World\Base_year_2015`). `generate_shock_dS.py` and `generate_shock_agri.py` read the structure of the shocks (`S_x_dom`, `A`, `detail_levels.xlsx`, `base_year` of the `info.json` files) in the same folder, through `planefr_paths.get_ssp_base_accounts_dir()`. To change the base year, edit that key and rerun `run_all_SSPs.ps1`.
 - **French domestic pressures are not changed by the SSP scenario.** At step 4, the `F_x_dom` of each scenario are replaced by those of the reference output `SSPs/Base_year_2015`. The SSP scenario therefore only acts on the pressure content of imports. The change in domestic pressures belongs to the French scenario. The reference folder is not created by any script of this chain: it must already contain the `gmrio_to_snac_s` output of the 2015 base year.
 - **`extract_f_y_tot.py` is not rerun.** It only depends on raw EXIOBASE and must have been run once by the base chain.
 
@@ -466,21 +521,38 @@ The groups produced are `no_SSP_agri/` and `<SSP>_2050_agri/`, with `Base_year_a
 
 ### 5.5 Assembling the displayed groups
 
-The `SSP_all`, `S1+` and `Base_year` groups in `Module_PlaneFR/data/3.11.2/` are not produced by any script. They were assembled by hand, by copying and renaming scenario folders.
+The `ADEME`, `PAPER`, `S1+` and `Base_year` groups combine or rename scenarios computed in other groups. They are declared in [data/scenario_groups.json](../data/scenario_groups.json), which maps each displayed folder to its source, an engine output relative to `data/<version>/`:
+
+```json
+"PAPER": {
+  "2015": "no_SSP/Base_year_2015",
+  "S1": "no_SSP/S1_2050",
+  "S1+": "SSP2_19_Sus_2050/S1_2050",
+  "S4": "no_SSP/S4_2050",
+  "TREND": "no_SSP/TEND_2050"
+}
+```
+
+[build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) rebuilds them at the end of `run_pipeline_from_engine.ps1`, `run_full_pipeline.ps1` and `run_all_SSPs.ps1`, after `compute_ds_x_dom.py`, so that the copies carry the final `F_Y_tot` values. Each declared folder is deleted then recopied from its source; undeclared folders of a group are left untouched and reported. The script stops with exit code 1, without copying anything, if a source is missing or if a group is the parent folder of a source (the engine output groups are never overwritten). It can also be run alone, e.g. `python build_scenario_groups.py --groups S1+`.
+
+The group folders must therefore not be edited by hand. To add or change a display group, edit `scenario_groups.json` and rerun the script.
 
 | Group | Folder | France accounts | Shock |
 |---|---|---|---|
-| `SSP_all` | `2015` | `Base_year_2015` | none |
+| `ADEME` | `2015` | `Base_year_2015` | none |
+| | `S1` to `S4`, `TREND` | `Base_year_2015` | `S1_2050` to `S4_2050`, `TEND_2050` |
+| `PAPER` | `2015` | `Base_year_2015` | none |
 | | `S1`, `S4`, `TREND` | `Base_year_2015` | `S1_2050`, `S4_2050`, `TEND_2050` |
 | | `S1+` | `SSP2_19_Sus_2050` | `S1_2050` |
 | `S1+` | `2019_FR` | `Base_year_2019` | none |
 | | `S1_2050` | `SSP2_19_Sus_2050` | `S1_2050` |
 | `Base_year` | `2019_FR` | `Base_year_2019` | none |
-| `no_SSP` | `Base_year`, `S1` to `S4`, `TEND` | `Base_year_2015` | matching scenario |
 
-The exact origin of a folder can be read in its `metadata.json`, written by the engine, which records the paths of the accounts and shock used. Its `system/info.json` gives its base year and scenario name; `reformat_d_cba_monde_europe.py` and `compute_ds_x_dom.py` rely on it, so renamed or copied folders receive the right `F_Y_tot` values and shocks.
+The exact origin of a folder can be read in its `metadata.json`, written by the engine, which records the paths of the accounts and shock used. Its `system/info.json` gives its base year and scenario name; `reformat_d_cba_monde_europe.py` and `compute_ds_x_dom.py` rely on it, so copied folders receive the right `F_Y_tot` values and shocks.
 
-The `no_SSP/` folders were renamed (`Base_year` instead of `Base_year_2015`, `S1` instead of `S1_2050`). `export_dS.py` still expects `no_SSP/Base_year_2015`, and `compute_ds_x_dom.py` reads the 2050 production from the rows of `S_extraction.xlsx` named after the original folders (`S1_2050`…): a new run of the pipeline recreates the folders under these names, next to the renamed ones.
+`export_dS.py` reads the `no_SSP` engine outputs under their explicit names (`Base_year_2015` and the `SCENARIO_FOLDER_NAMES` of `compute_ds_x_dom.py`), and stops with an explicit message if one is missing. Other folders placed in `no_SSP/` are ignored.
+
+> **Point of attention.** At the time of writing, the folders of `no_SSP/` have been renamed by hand (`Base_year`, `S1`… instead of `Base_year_2015`, `S1_2050`…). The `no_SSP` sources of `ADEME` and `PAPER` therefore do not exist under their engine names until the France engine is rerun, which recreates them next to the renamed folders. These renamed folders then become redundant duplicates in the `no_SSP` group, which is the default group of `planefr_lib` (`PLANEFR_SCENARIO_GROUP`).
 
 ---
 
@@ -498,7 +570,7 @@ A MatMat shock is a folder with the same structure as accounts, in which each va
 
 ### 6.1 Manual shocks on French domestic pressures
 
-The delivered Transition(s) 2050 scenarios only cover the production system. For the extensions added by PlanéFR, the change in domestic pressures to 2050 is entered by hand in `Settings/a-manual_shocks/France/input/my_manual_param.xlsx`.
+The delivered Transition(s) 2050 scenarios only cover the production system. For the extensions added by PlanéFR, the change in domestic pressures to 2050 is entered by hand in `planeFR/parameters/a-manual_shocks/my_manual_param.xlsx`.
 
 This workbook has one sheet per extension (`dom_air_emissions`, `dom_land`, `dom_nutrients`, `dom_water`). Each row designates a pressure (`row_name`) and gives, for each scenario, its relative change between 2015 and 2050. The `variable` column is `F_x_dom` for a production pressure or `F_Y_tot` for a direct pressure of final demand. The values themselves are scenario assumptions (source to be specified).
 
@@ -517,7 +589,7 @@ The base-year data and the 2050 production are read in `Module_PlaneFR/data/S_ex
 
 **Direct pressures of final demand.** They have no sectoral dimension and do not go through the engine. The script writes the base-year value multiplied by `(1 + shock)` directly into the scenario's `F_Y_tot.pkl`. Starting from the base-year value, not from the value already in the file, makes the operation idempotent.
 
-These shocks are applied to **every** scenario folder of `data/<version>/`, whatever its group (`no_SSP`, SSP groups, `_agri` groups, groups assembled by hand). The scenario of a folder is read from its `system/info.json` (`scenario_name` = S1…TEND and `base_year` = 2015), not from its name: `SSP_all/S1+`, for example, receives the S1 shock. Base years without shock (empty `scenario_name`, `Base_year_agri`) are left out.
+These shocks are applied to **every** scenario folder of `data/<version>/`, whatever its group (`no_SSP`, SSP groups, `_agri` groups, groups assembled by hand). The scenario of a folder is read from its `system/info.json` (`scenario_name` = S1…TEND and `base_year` = 2015), not from its name: `PAPER/S1+`, for example, receives the S1 shock. Base years without shock (empty `scenario_name`, `Base_year_agri`) are left out.
 
 The `--only-f-y-tot` option applies the `F_Y_tot` shocks without recomputing or rewriting the `dS_x_dom`.
 
@@ -559,7 +631,7 @@ An arrow "→" in the group column designates a shock on matrix `A`. Any other v
 
 The labels of the `A` groups are matched literally by `generate_shock_dS.py` (constants `ENERGY_GROUP_PREFIX`, `ELECTRICITY_MIX_GROUP`, `HEAVY_GROUPS`): renaming a group in the workbook requires changing these constants. If the scenario sheets contain a group missing from the `Matching` sheet, the script stops and asks for `extract_S_SSPs.py` to be rerun.
 
-Region mapping goes through two tables: the `Regions` sheet links the IMAGE regions to the aggregated regions, and the `regions` sheet of `Settings/4-engine/bridge_SSPs.xlsx` links each of the 49 EXIOBASE regions to an aggregated region. All the EXIOBASE regions of the same aggregated region get the same shock.
+Region mapping goes through two tables: the `Regions` sheet links the IMAGE regions to the aggregated regions, and the `regions` sheet of `planeFR/parameters/4-engine/bridge_SSPs.xlsx` links each of the 49 EXIOBASE regions to an aggregated region. All the EXIOBASE regions of the same aggregated region get the same shock.
 
 #### Step 1 — `extract_S_SSPs.py`: 2050/2020 changes
 
@@ -689,7 +761,11 @@ Main loaders of `io.py`:
 
 The pickle loaders return `None` when a file does not exist for a scenario × extension pair. This is a normal case: `ghg_combustion`, for example, does not exist in the World and Europe folders.
 
-**Selecting scenarios.** `config.get_scenario_folders(exclude_2019, exclude_others, scenario_group)` returns the folders of a group, sorted by name. A folder is recognized as a scenario if it contains an `extensions` sub-folder. The reference scenario of the figures is the first in the list (`REFERENCE_SCENARIO_IDX = 0`). If the group has no `Base_year_2015` folder, a warning is issued and the reference is the first folder in alphabetical order: `2015` in `SSP_all`, `2019_FR` in `S1+`.
+**Selecting scenarios.** `config.get_scenario_folders(exclude_2019, exclude_others, scenario_group)` returns the folders of a group, sorted by name. A folder is recognized as a scenario if it contains an `extensions` sub-folder. The reference scenario of the figures is the first in the list (`REFERENCE_SCENARIO_IDX = 0`). If the group has no `Base_year_2015` folder, a warning is issued and the reference is the first folder in alphabetical order: `2015` in `ADEME` and `PAPER`, `2019_FR` in `S1+`.
+
+> **Possible improvement — library structure.**
+> - `planefr_lib` is imported by adding `notebooks/` to `sys.path`, both in the notebooks and in `extract_S_SSPs.py`; making it an installable package (`pip install -e`) would remove these path manipulations.
+> - `plot_overshoot.py` and `plot_radial_synthesis.py` exceed 1,000 lines each; splitting geometry, scales and annotations into separate modules would make them easier to maintain.
 
 ### 7.3 Computing a footprint
 
@@ -702,6 +778,8 @@ The pressure of a sub-process is the sum, over its rows, of the value of the row
 ```
 pressure(sub-process) = Σ_rows  factor(row) × value(row)
 ```
+
+> **Possible improvement — performance.** `processing.filter_and_weight` applies this formula row by row with `iterrows`. A vectorized version (aligning the factors on the index with `reindex`, then one multiplication) would give the same result much faster, which matters with 653 factor rows (408 for "Biodiversity loss - PDF" alone) applied to every scenario.
 
 | Sub-process | Rows used | Factor |
 |---|---|---|
@@ -781,6 +859,8 @@ The same sheet contains the unit-conversion rows:
 The `Equality…` rows are formulas linked to `budget_shares.xlsx`: global budget × France share of the `Budget_shares_variants` sheet (`UN – EPC 2019-2100` for GHG, `UN – EPC 2050` otherwise) for the absolute rows, and population of the `Population` sheet for the `(p.cap)` rows. These links are by cell reference: moving rows or columns in `budget_shares.xlsx`, or renaming its sheets, breaks them.
 
 > **Point of attention.** The external links of `thresholds.xlsx` still point to a sheet called `Budget_shares_variantes`, the former name of `Budget_shares_variants` (30 cells). The values cached in the file remain correct and are what pandas reads, but Excel cannot refresh these formulas until the links are updated.
+
+> **Possible improvement — fragile dependencies on the Excel files.** Several reads depend on the layout of the workbooks rather than on explicit keys: cell links between `thresholds.xlsx` and `budget_shares.xlsx` (broken as soon as a sheet is renamed, as above, or a row or column moved); fixed positions (`iloc[1:201]` in `io.load_bridge_m_matrix`, `header=3` for `budget_shares.xlsx`, `iloc[0, 7:]` in `compute_ds_x_dom.load_manual_shocks`); scenario properties deduced from folder names (`"2019" in name` in `processing.get_population`). Computing the national thresholds in `processing` from the global budgets and the shares, instead of reading formula results, and storing the parameters as long-format tables with explicit key columns, would remove these failure modes.
 
 #### From global to national budget
 
@@ -891,22 +971,22 @@ The workbooks produced are therefore read by `planefr_lib` without manual editin
 
 ### Pipeline parameters
 
-All these files are in `matmat-ademe/data/4-PlaneFR/Settings/` and are not versioned.
+All these files are in `matmat-ademe/planeFR/parameters/` and are versioned. The JSON files are templates (§ 5): they are edited by hand and never modified by the scripts.
 
-| File | Role | Changed by |
+| File | Role | Used by |
 |---|---|---|
-| `1-exiobase3_eeio/exiobase3_eeio_settings.json` | Version, year, list of extensions to extract | `run_exiobase3_eeio_batch.ps1` |
-| `2-gmrio_to_snac_s/gmrio_to_snac_S_FR.json`, `gmrio_to_snac_S_SSPs.json` | Settings of the SNAC conversion, `foreign_global_feedback` mode | `run_gmrio_to_snac_s_batch*.ps1` scripts |
-| `2-gmrio_to_snac_s/bridge_matrices.xlsx`, `detail_levels.xlsx` | Definition of the domestic region and of the final demand categories | by hand |
-| `3-update_calib_fr/update_calib_fr_PlaneFR.json`, `..._SSPs.json` | Extensions taken from each set of accounts | `run_update_calib_fr_batch*.ps1` scripts |
-| `3-update_calib_fr/bridge_matrices.xlsx` | From EXIOBASE resolution to that of the France calibration | by hand |
+| `1-exiobase3_eeio/exiobase3_eeio_settings.json` | Version, year, list of extensions to extract | `run_exiobase3_eeio_batch.ps1`, `extract_f_y_tot.py` |
+| `2-gmrio_to_snac_s/gmrio_to_snac_S_FR.json`, `gmrio_to_snac_S_SSPs.json` | Settings of the SNAC conversion, `foreign_global_feedback` mode | `run_gmrio_to_snac_s_batch*.ps1` |
+| `2-gmrio_to_snac_s/bridge_matrices.xlsx`, `detail_levels.xlsx` | Definition of the domestic region and of the final demand categories | `gmrio_to_snac_s` (via the JSON) |
+| `3-update_calib_fr/update_calib_fr_FR.json`, `update_calib_fr_SSPs.json` | Extensions taken from each set of accounts | `run_update_calib_fr_batch*.ps1` |
+| `3-update_calib_fr/bridge_matrices.xlsx` | From EXIOBASE resolution to that of the France calibration | `update_calib_fr` (via the JSON) |
 | `4-engine/settings_engine_World.json` | World engine, base year, `standard` strategy | `run_exiobase3_eeio_batch.ps1` |
-| `4-engine/settings_engine_SSPs.json` | World engine, SSP scenarios; `path_in.accounts` sets the base accounts of the SSP shocks (§ 5.3) | `run_engine_batch_SSPs.ps1` (except `path_in.accounts`) |
+| `4-engine/settings_engine_SSPs.json` | World engine, SSP scenarios; `path_in.accounts` sets the base accounts of the SSP shocks (§ 5.3) | `run_engine_batch_SSPs.ps1`, `generate_shock_dS.py`, `generate_shock_agri.py` |
 | `4-engine/settings_engine_France_shocks.json` | France engine, `exo_invest_matrix` strategy | `run_engine_batch.ps1` |
-| `4-engine/bridge_SSPs.xlsx` | Mapping of the 49 EXIOBASE regions to the aggregated IMAGE regions | by hand |
-| `a-manual_shocks/France/input/my_manual_param.xlsx` | 2015-2050 change in domestic pressures, by scenario | by hand |
+| `4-engine/bridge_SSPs.xlsx` | Mapping of the 49 EXIOBASE regions to the aggregated IMAGE regions | `generate_shock_dS.py` |
+| `a-manual_shocks/my_manual_param.xlsx` | 2015-2050 change in domestic pressures, by scenario | `compute_ds_x_dom.py` |
 
-The `a-manual_shocks/*/output` and `aggregation/` folders and the `3-update_calib_fr/settings.json` file are earlier trials, not used by the scripts.
+`a-manual_shocks/detail_levels.xlsx` and `2-gmrio_to_snac_s/doc.txt` (description of the `m_row_mode` options) are kept for reference; no script reads them.
 
 ### Post-processing parameters
 
@@ -936,15 +1016,18 @@ Sheets of `bridge_matrices.xlsx`:
 
 | Script | Main inputs | Main outputs |
 |---|---|---|
-| [extract_f_y_tot.py](../../MatMat/matmat-ademe/scripts/extract_f_y_tot.py) | EXIOBASE archives, adapter settings | `Outputs/World/Base_year_*/extensions/<ext>/F_Y_tot.pkl` |
-| [reformat_d_cba_monde_europe.py](../../MatMat/matmat-ademe/scripts/reformat_d_cba_monde_europe.py) | World accounts of the base years | `2019_*` folders, France `F_Y_tot` |
-| [reformat_d_cba_k.py](../../MatMat/matmat-ademe/scripts/reformat_d_cba_k.py) | France engine outputs | Same files, reformatted |
-| [export_dS.py](../../MatMat/matmat-ademe/scripts/export_dS.py) | France engine outputs, `no_SSP` group | `S_extraction.xlsx` |
-| [compute_ds_x_dom.py](../../MatMat/matmat-ademe/scripts/compute_ds_x_dom.py) | `S_extraction.xlsx`, `my_manual_param.xlsx` | `dS_x_dom` of the France shocks, shocked `F_Y_tot` |
-| [rebuild_shock_extensions.py](../../MatMat/matmat-ademe/scripts/rebuild_shock_extensions.py) | `gmrio_to_snac_s` outputs, shocks | Extension folders of the shocks |
-| [extract_S_SSPs.py](../../MatMat/matmat-ademe/scripts/extract_S_SSPs.py) | IMAGE scenarios, `Matching` and `Regions` sheets | Scenario sheets of the matching workbook |
-| [generate_shock_dS.py](../../MatMat/matmat-ademe/scripts/generate_shock_dS.py) | Matching workbook, base world accounts | `2-shocks/3-SSPs_2050/` |
-| [generate_shock_agri.py](../../MatMat/matmat-ademe/scripts/generate_shock_agri.py) | Original shock sets, `M` sheet | `_agri` shock sets |
+| [extract_f_y_tot.py](../../MatMat/matmat-ademe/planeFR/scripts/1-exiobase3_eeio/extract_f_y_tot.py) | EXIOBASE archives, adapter settings | `Outputs/World/Base_year_*/extensions/<ext>/F_Y_tot.pkl` |
+| [reformat_d_cba_monde_europe.py](../../MatMat/matmat-ademe/planeFR/scripts/5-reformat/reformat_d_cba_monde_europe.py) | World accounts of the base years | `2019_*` folders, France `F_Y_tot` |
+| [reformat_d_cba_k.py](../../MatMat/matmat-ademe/planeFR/scripts/5-reformat/reformat_d_cba_k.py) | France engine outputs | Same files, reformatted |
+| [export_dS.py](../../MatMat/matmat-ademe/planeFR/scripts/a-manual_shocks/export_dS.py) | France engine outputs, `no_SSP` group | `S_extraction.xlsx` |
+| [compute_ds_x_dom.py](../../MatMat/matmat-ademe/planeFR/scripts/a-manual_shocks/compute_ds_x_dom.py) | `S_extraction.xlsx`, `my_manual_param.xlsx` | `dS_x_dom` of the France shocks, shocked `F_Y_tot` |
+| [rebuild_shock_extensions.py](../../MatMat/matmat-ademe/planeFR/scripts/2-gmrio_to_snac_s/rebuild_shock_extensions.py) | `gmrio_to_snac_s` outputs, shocks | Extension folders of the shocks |
+| [extract_S_SSPs.py](../../MatMat/matmat-ademe/planeFR/scripts/b-ssp_shocks/extract_S_SSPs.py) | IMAGE scenarios, `Matching` and `Regions` sheets | Scenario sheets of the matching workbook |
+| [generate_shock_dS.py](../../MatMat/matmat-ademe/planeFR/scripts/b-ssp_shocks/generate_shock_dS.py) | Matching workbook, base world accounts | `2-shocks/3-SSPs_2050/` |
+| [generate_shock_agri.py](../../MatMat/matmat-ademe/planeFR/scripts/c-agri_shocks/generate_shock_agri.py) | Original shock sets, `M` sheet | `_agri` shock sets |
+| [build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) | `scenario_groups.json`, engine outputs | Display groups (`ADEME`, `PAPER`, `S1+`, `Base_year`) |
+| [planefr_paths.py](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_paths.py) | — | Shared paths, imported by the other Python scripts |
+| [planefr_common.ps1](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_common.ps1) | Settings templates | Shared paths and template functions, dot-sourced by the PowerShell scripts; generated settings in `data/4-PlaneFR/Settings_run/` |
 
 ---
 
@@ -990,7 +1073,7 @@ Sheets of `bridge_matrices.xlsx`:
 
 ### Rerunning all the computations
 
-From `matmat-ademe/scripts/`, in PowerShell:
+The chains are in `matmat-ademe/planeFR/scripts/0-chains/`. They can be run from any folder; from that one, in PowerShell:
 
 ```powershell
 # 1. Base years and French scenarios, rest of the world unchanged
@@ -1007,6 +1090,8 @@ From `matmat-ademe/scripts/`, in PowerShell:
 .\run_all_SSPs_agri.ps1 -Version 3.11.2
 ```
 
+The script of a single step can also be run on its own from its folder, e.g. `..\4-engine\run_engine_batch.ps1 -Version 3.11.2`. The Python scripts are run from the root of `matmat-ademe` with `uv run python planeFR\scripts\<folder>\<script>.py`.
+
 Then, from `Github/ademe_eemrio/`:
 
 ```powershell
@@ -1017,7 +1102,7 @@ The figures are produced by running the notebooks of `Module_PlaneFR/notebooks/`
 
 ### Running a single step
 
-Each MatMat step can be run on its own, from the root of `matmat-ademe`:
+Each MatMat step can be run on its own, from the root of `matmat-ademe`. Pass a settings file generated by a previous run (`data/4-PlaneFR/Settings_run/...`), not a template of `planeFR/parameters/`: the templates contain the `{parameters}` token, which only the PowerShell scripts replace.
 
 ```powershell
 uv run python -m matmat.cli -a exiobase3_eeio -st <settings.json> --no_confirm   # adapter
@@ -1034,7 +1119,7 @@ uv run python -m matmat.cli -p update_calib_fr -st <settings.json> --no_confirm
 To reapply only the manual `F_Y_tot` shocks, from the root of `matmat-ademe`:
 
 ```powershell
-uv run python scripts\compute_ds_x_dom.py --only-f-y-tot
+uv run python planeFR\scripts\a-manual_shocks\compute_ds_x_dom.py --only-f-y-tot
 ```
 
 ### Using `planefr_lib` in a notebook
@@ -1051,7 +1136,7 @@ sys.path.insert(0, str(notebooks_dir))
 from planefr_lib import config, io, processing
 from planefr_lib.plot_radial_synthesis import create_radial_synthesis_figure
 
-GROUP = "SSP_all"
+GROUP = "PAPER"
 cf_df = io.load_characterization_factors(GROUP)
 thresholds_df = io.load_thresholds(GROUP)
 bridge_df = io.load_bridge_matrices()
@@ -1071,7 +1156,7 @@ fig, _ = create_radial_synthesis_figure(
 
 | Need | Files to change |
 |---|---|
-| Add an EXIOBASE extension | Add its name to `extension_names` in the settings of the adapter, of `gmrio_to_snac_s` and of the engines; add `dom_<ext>` and `imp_<ext>` to the `update_calib_fr` settings and to the corresponding bridge matrix. |
+| Add an EXIOBASE extension | Add its name to `extension_names` in the templates of `planeFR/parameters/` (adapter, `gmrio_to_snac_s`, engines); add `dom_<ext>` and `imp_<ext>` to the `update_calib_fr` settings and to the corresponding bridge matrix. |
 | Add a sub-process | Add its rows to the `All` sheet of `characterization_factors.xlsx`, and a column of the same name to the `All` sheet of `thresholds.xlsx` (budgets, units, conversions). |
 | Change a threshold | `All` sheet of `thresholds.xlsx`. |
 | Change the sharing principle | `sharing_principle` parameter of the plotting function (`None`, `"EPC"`, `"CTR"`); reference columns in `config.py`. |
@@ -1080,10 +1165,18 @@ fig, _ = create_radial_synthesis_figure(
 | Add a French scenario | Put the shock in `2-shocks/1-transitions_2050/`, add a column to `my_manual_param.xlsx` and an entry to `SCENARIO_FOLDER_NAMES` in `compute_ds_x_dom.py`. |
 | Add a rest-of-world scenario | Put the IMAGE CSV file in `data/SSP/Scenarios/`, then run `run_all_SSPs.ps1`. For nitrogen and phosphorus, `Nutrients.xlsx` must contain the `PB_<name>` scenario. |
 | Change a projection rule | `Matching` sheet of the matching workbook; constants of `generate_shock_dS.py` if an `A` group is renamed. |
-| Change the base year of the SSP shocks | `path_in.accounts` of `settings_engine_SSPs.json`, then `run_all_SSPs.ps1`. |
+| Change the base year of the SSP shocks | `path_in.accounts` of the template `planeFR/parameters/4-engine/settings_engine_SSPs.json`, then `run_all_SSPs.ps1`. |
+| Change a calculation parameter of a MatMat step | The matching template of `planeFR/parameters/` (e.g. `m_row_mode` in the `gmrio_to_snac_s` templates). |
 | Change EXIOBASE version | `-Version` parameter of the scripts, after adding the version to `SUPPORTED_VERSIONS_TO_DOI` if needed. |
-| Create a scenario group to display | Copy the desired scenario folders into a new sub-folder of `Module_PlaneFR/data/<version>/`. |
+| Create a scenario group to display | Declare it in `Module_PlaneFR/data/scenario_groups.json`, then run `build_scenario_groups.py`. |
+| Run on another machine or folder layout | Keep `Module_PlaneFR` next to `MatMat`, or set `PLANEFR_MODULE_DIR`; adapt the two `config.toml` files. |
 | Feed a group with household data | Add an entry `@{ Scenario = ...; Group = ... }` to `$Scenarios` in `BdF.ps1`. |
+
+> **Possible improvement — tests.** PlanéFR has no automated tests, whereas MatMat already provides a `pytest` setup (`matmat-ademe/tests/`). The most useful targets, before any change to the module:
+> - the formula parser of `extract_S_SSPs.py` (operators, units in parentheses, `OR`, `max`/`min`, yields);
+> - `compute_ds` in `compute_ds_x_dom.py` and `generate_shock_dS.py`, on small synthetic tables;
+> - `processing.filter_and_weight` and the footprint functions;
+> - a non-regression test on the totals of the figures for a reference scenario. `export_impacts_coicop.py` (§ 8) already compares its totals with those of the figures, which can serve as a model.
 
 ---
 

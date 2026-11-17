@@ -5,7 +5,7 @@ matrices, thresholds, budget shares, population) and MRIO pickles by scenario
 
 General convention of the pickle loaders: they return None if the file does
 not exist for this scenario/LP (rather than raising an exception), because a
-missing file for some scenario x sub-process combinations is a normal case
+missing file for some scenario x indicator combinations is a normal case
 (e.g. ghg_combustion missing from the World/Europe scenarios).
 """
 
@@ -36,8 +36,8 @@ def _normalize_label(label):
 
 
 def load_characterization_factors(scenario_group=None):
-    """Characterization factors: one row per (sub-process, LP, EXIOBASE stressor),
-    with columns config.CF_SUBPROCESS_COL ("Indicators"), config.CF_LP_COL
+    """Characterization factors: one row per (indicator, LP, EXIOBASE stressor),
+    with columns config.CF_INDICATOR_COL ("Indicators"), config.CF_LP_COL
     ("EXIOBASE groups"), config.CF_STRESSOR_COL ("EXIOBASE stressors"),
     config.CF_UNIT_COL and config.CF_FACTOR_COL ("Characterization factors").
 
@@ -45,19 +45,19 @@ def load_characterization_factors(scenario_group=None):
     scenario_group ends with "_agri". Column names are matched to the config
     constants case-insensitively (the two sheets do not use the same
     capitalization, e.g. "EXIOBASE Groups" / "EXIOBASE groups"), and rows
-    without a sub-process or stressor are dropped."""
+    without a indicator or stressor are dropped."""
     sheet = config.CF_AGRI_SHEET if is_agri_group(scenario_group) else config.CF_SHEET
     df = pd.read_excel(config.CHARACTERIZATION_FACTORS_FILE, sheet_name=sheet)
     canonical = {name.casefold(): name for name in (
-        config.CF_SUBPROCESS_COL, config.CF_LP_COL, config.CF_STRESSOR_COL,
+        config.CF_INDICATOR_COL, config.CF_LP_COL, config.CF_STRESSOR_COL,
         config.CF_UNIT_COL, config.CF_FACTOR_COL)}
     df = df.rename(columns=lambda c: canonical.get(_normalize_label(str(c)).casefold(), c))
     missing = [c for c in canonical.values() if c not in df.columns and c != config.CF_UNIT_COL]
     if missing:
         raise KeyError(f"Columns {missing} not found in sheet '{sheet}' of "
                        f"{config.CHARACTERIZATION_FACTORS_FILE.name} (columns: {list(df.columns)})")
-    df = df.dropna(subset=[config.CF_SUBPROCESS_COL, config.CF_STRESSOR_COL])
-    for col in (config.CF_SUBPROCESS_COL, config.CF_LP_COL, config.CF_STRESSOR_COL):
+    df = df.dropna(subset=[config.CF_INDICATOR_COL, config.CF_STRESSOR_COL])
+    for col in (config.CF_INDICATOR_COL, config.CF_LP_COL, config.CF_STRESSOR_COL):
         df[col] = df[col].map(_normalize_label)
     return df
 
@@ -94,7 +94,7 @@ def load_bridge_m_matrix(sheet_name="M"):
 
 def load_thresholds(scenario_group=None):
     """config.THRESHOLDS_SHEET sheet ("All") of thresholds.xlsx: planetary
-    thresholds/limits by sub-process (one column per sub-process, one row per
+    thresholds/limits by indicator (one column per indicator, one row per
     notion). If scenario_group ends with "_agri", reads config.THRESHOLDS_AGRI_SHEET
     ("Agri") instead.
 
@@ -189,7 +189,7 @@ def load_bdf(sheet_name="décile", scenario_group=None, path=None):
     """Sheet sheet_name of impacts_facteurs_agrégé_{scenario_group}*.xlsx (see
     bdf_file): 1 row per household category (+ a config.BDF_TOTAL_ROW row),
     indexed by the 1st column; column config.BDF_WEIGHT_COL (share of the
-    population) then 1 column per sub-process, named "<sub-process> (<unit>)".
+    population) then 1 column per indicator, named "<indicator> (<unit>)".
     The sheet names ("décile", "unité urbaine", "croisé") are those written by
     the BdF pipeline (Github/ademe_eemrio). path: file to read instead of
     bdf_file(scenario_group) (e.g. bdf_comparison_file)."""

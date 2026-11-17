@@ -1,10 +1,10 @@
 """
 100 % stacked bar showing the contribution of each Earth-system process (LP,
 "EXIOBASE groups" column of characterization_factors.xlsx) to the footprint of
-a given sub-process (e.g. "Biodiversity loss"), one bar per scenario.
+a given indicator (e.g. "Biodiversity loss"), one bar per scenario.
 
-Unlike plot_stacked_bar (stacked by consumption category, one sub-process per
-bar), this figure stacks by LP of origin, for a single sub-process, with one
+Unlike plot_stacked_bar (stacked by consumption category, one indicator per
+bar), this figure stacks by LP of origin, for a single indicator, with one
 bar per scenario.
 """
 
@@ -57,16 +57,16 @@ def group_lp_values(lp_values):
     return grouped
 
 
-def create_subprocess_contribution_chart(lp_values_by_scenario, scenario_names,
-                                          subprocess_name="", ax=None, show_legend=True):
+def create_indicator_contribution_chart(lp_values_by_scenario, scenario_names,
+                                          indicator_name="", ax=None, show_legend=True):
     """Stacked bar in % (one per scenario) of the contribution of each process
-    group (PROCESS_GROUP_ORDER) to the footprint of subprocess_name.
+    group (PROCESS_GROUP_ORDER) to the footprint of indicator_name.
 
     Args:
         lp_values_by_scenario: list of {raw_lp: absolute_value}, one entry per
-            scenario (see processing.process_subprocess_lp_breakdown).
+            scenario (see processing.process_indicator_lp_breakdown).
         scenario_names: matching scenario names (same order/length).
-        subprocess_name: only used for the figure title.
+        indicator_name: only used for the figure title.
         ax: existing matplotlib axis; if None, a new figure is created.
 
     Returns:
@@ -98,7 +98,7 @@ def create_subprocess_contribution_chart(lp_values_by_scenario, scenario_names,
         bottom = bottom + heights_pct
 
     ax.set_ylabel("Share of footprint (%)", fontsize=12, fontweight="bold")
-    title = f"Contribution by pressure categories — {subprocess_name}" if subprocess_name else "Contribution by impact categories"
+    title = f"Contribution by pressure categories — {indicator_name}" if indicator_name else "Contribution by impact categories"
     ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
     ax.set_xticks(x_pos)
     ax.set_xticklabels(scenario_names, rotation=30, ha="right", fontweight="bold", fontsize=10.5)

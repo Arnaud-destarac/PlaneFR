@@ -1,6 +1,6 @@
 """
 Processing of the data loaded by io.py: filtering/weighting by characterization
-factor, aggregation by sub-process, computation of the footprints in absolute
+factor, aggregation by indicator, computation of the footprints in absolute
 values (process_scenario, broken down by consumption category, and
 process_scenario_absolute, total only) and per capita CBA/PBA
 (process_scenario_per_capita, population from the "Population" sheet of
@@ -25,34 +25,34 @@ DOMESTIC = "domestic"
 IMPORTED = "imported"
 
 # ============================================================================
-# CHARACTERIZATION FACTORS: sub-process <-> LP, stressor -> factor
+# CHARACTERIZATION FACTORS: indicator <-> LP, stressor -> factor
 # ============================================================================
 
 
-def get_unique_subprocesses(cf_df):
-    """Return {sub-process: [LP1, LP2, ...]} from the characterization factors."""
-    subprocess_to_lp = {}
+def get_unique_indicators(cf_df):
+    """Return {indicator: [LP1, LP2, ...]} from the characterization factors."""
+    indicator_to_lp = {}
     for _, row in cf_df.iterrows():
-        sp = row[config.CF_SUBPROCESS_COL]
+        sp = row[config.CF_INDICATOR_COL]
         lp = row[config.CF_LP_COL]
-        subprocess_to_lp.setdefault(sp, [])
-        if lp not in subprocess_to_lp[sp]:
-            subprocess_to_lp[sp].append(lp)
-    return subprocess_to_lp
+        indicator_to_lp.setdefault(sp, [])
+        if lp not in indicator_to_lp[sp]:
+            indicator_to_lp[sp].append(lp)
+    return indicator_to_lp
 
 
-def build_extension_factor_map(cf_df, subprocess_name, lp_name=None):
-    """Build {exiobase_stressor: characterization_factor} for a sub-process.
+def build_extension_factor_map(cf_df, indicator_name, lp_name=None):
+    """Build {exiobase_stressor: characterization_factor} for a indicator.
 
     If lp_name is given, also restricts to the matching LP. Both modes are
     actually used (not just for convenience): process_scenario() keeps all the
-    stressors of the sub-process whatever the current LP (each d_cba file only
+    stressors of the indicator whatever the current LP (each d_cba file only
     contains the stressors of its own LP anyway), whereas
     _scenario_footprint_totals() explicitly restricts to the LP -- both give
     the same numerical result, but do not merge the two modes without
     checking: it is not just a matter of style.
     """
-    mask = cf_df[config.CF_SUBPROCESS_COL] == subprocess_name
+    mask = cf_df[config.CF_INDICATOR_COL] == indicator_name
     if lp_name is not None:
         mask &= cf_df[config.CF_LP_COL] == lp_name
     subset = cf_df[mask]
@@ -168,10 +168,10 @@ def mean_variation(scenario_data, reference_data, value_keys):
     scenario vs the reference, over all LPs and all requested accountings
     (value_keys, "cba" and/or "pba") -- None if no comparable value."""
     variations = []
-    for subprocess_name, ref_payload in reference_data.items():
+    for indicator_name, ref_payload in reference_data.items():
         for key in value_keys:
             ref_val = extract_value(ref_payload, key)
-            val = extract_value(scenario_data.get(subprocess_name), key)
+            val = extract_value(scenario_data.get(indicator_name), key)
             if ref_val and val is not None:
                 variations.append((val - ref_val) / abs(ref_val))
     return float(np.mean(variations)) if variations else None
@@ -195,7 +195,7 @@ def sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_id
     return [reference_idx] + trend + sorted(rest, key=sort_key, reverse=True)
 
 
-def lookup_dls(dls_df, dls_row_name, subprocess_name):
+def lookup_dls(dls_df, dls_row_name, indicator_name):
     """National (France) DLS social floor, in "Figures unit", read as is on the
     dls_row_name row of the DLS sheet (e.g. "DLS", "DLS 2050 upper bound" --
     the "... (p.cap)" per-capita rows are separate and ignored).
@@ -207,13 +207,13 @@ def lookup_dls(dls_df, dls_row_name, subprocess_name):
     stripped_index = {row.strip(): row for row in dls_df.index if isinstance(row, str)}
     if dls_row_name not in stripped_index:
         return None
-    return lookup_cell(dls_df, stripped_index[dls_row_name], subprocess_name, require_positive=True)
+    return lookup_cell(dls_df, stripped_index[dls_row_name], indicator_name, require_positive=True)
 
 
-def lookup_threshold(thresholds_df, threshold_row_name, subprocess_name):
+def lookup_threshold(thresholds_df, threshold_row_name, indicator_name):
     """LOWER/LB/UB threshold read as is in thresholds.xlsx (rows "Equality
     (Lower bound)"/"Equality"/"Equality (Upper bound)"), strictly positive or None."""
-    return lookup_cell(thresholds_df, threshold_row_name, subprocess_name, require_positive=True)
+    return lookup_cell(thresholds_df, threshold_row_name, indicator_name, require_positive=True)
 
 
 # ============================================================================
@@ -319,7 +319,7 @@ def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref"
     return value if value > 0 else None
 
 
-def compute_region_budget(thresholds_df, shares_df, subprocess_name, region_code,
+def compute_region_budget(thresholds_df, shares_df, indicator_name, region_code,
                           sharing_principle, variant="ref", threshold_kind="lb",
                           column_pattern=None):
     """LOWER/LB/UB budget of a country/region, in absolute values, obtained by
@@ -340,14 +340,14 @@ def compute_region_budget(thresholds_df, shares_df, subprocess_name, region_code
 
     Returns:
         float, or None if a required piece of data is missing (world budget
-        not filled in for this sub-process, missing conversion, unknown share).
+        not filled in for this indicator, missing conversion, unknown share).
     """
     if threshold_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
         raise ValueError(f"Unknown threshold_kind: {threshold_kind!r}")
 
     world_budget = lookup_cell(thresholds_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
-                               subprocess_name, require_positive=True)
-    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, subprocess_name)
+                               indicator_name, require_positive=True)
+    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
     share = lookup_budget_share(shares_df, region_code, sharing_principle, variant, column_pattern)
     if world_budget is None or not world_conversion or share is None:
         return None
@@ -355,7 +355,7 @@ def compute_region_budget(thresholds_df, shares_df, subprocess_name, region_code
     return world_budget / world_conversion * share
 
 
-def compute_world_period_budget(thresholds_df, pop_df, subprocess_name, period,
+def compute_world_period_budget(thresholds_df, pop_df, indicator_name, period,
                                 threshold_kind="lb",
                                 pressure_period=config.WORLD_PRESSURE_POPULATION_PERIOD):
     """"Equivalent" LOWER/LB/UB world budget (absolute values) when the limit
@@ -378,8 +378,8 @@ def compute_world_period_budget(thresholds_df, pop_df, subprocess_name, period,
         raise ValueError(f"Unknown threshold_kind: {threshold_kind!r}")
 
     world_budget = lookup_cell(thresholds_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
-                               subprocess_name, require_positive=True)
-    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, subprocess_name)
+                               indicator_name, require_positive=True)
+    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
     if world_budget is None or not world_conversion:
         return None
 
@@ -393,9 +393,9 @@ def compute_world_period_budget(thresholds_df, pop_df, subprocess_name, period,
 # ============================================================================
 
 
-def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder_path,
+def process_single_indicator_scenario(indicator_name, lp_name, scenario_folder_path,
                                         cf_df, bridge_matrices_df, thresholds_df):
-    """Footprint (dom + imp, + F_Y if applicable) of a sub-process for a given
+    """Footprint (dom + imp, + F_Y if applicable) of a indicator for a given
     LP and scenario, broken down by consumption category through the bridge
     matrix. Also computes "pba" (production-based, F_x_dom + F_Y, a single
     value not broken down by category). Building block of process_scenario()."""
@@ -407,7 +407,7 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
     if d_cba_imp is None or d_cba_dom is None:
         return None
 
-    extension_factor_map = build_extension_factor_map(cf_df, subprocess_name)
+    extension_factor_map = build_extension_factor_map(cf_df, indicator_name)
 
     vector_imp = filter_and_weight_vector(d_cba_imp, extension_factor_map)
     vector_dom = filter_and_weight_vector(d_cba_dom, extension_factor_map)
@@ -440,7 +440,7 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
         result_imp = vector_imp.copy()
         result_dom = vector_dom.copy()
 
-    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, subprocess_name)
+    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
     if conversion_factor is not None:
         result_imp = result_imp / conversion_factor
         result_dom = result_dom / conversion_factor
@@ -465,19 +465,19 @@ def process_single_subprocess_scenario(subprocess_name, lp_name, scenario_folder
 
 
 def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, thresholds_df):
-    """Process a complete scenario: aggregate all the LPs of a same sub-process.
+    """Process a complete scenario: aggregate all the LPs of a same indicator.
 
     Returns:
-        tuple: (data_by_subprocess: {subprocess_name: result}, subprocess_to_lp)
+        tuple: (data_by_indicator: {indicator_name: result}, indicator_to_lp)
     """
-    subprocess_to_lp = get_unique_subprocesses(cf_df)
-    data_by_subprocess = {}
+    indicator_to_lp = get_unique_indicators(cf_df)
+    data_by_indicator = {}
 
-    for subprocess_name, lp_list in subprocess_to_lp.items():
+    for indicator_name, lp_list in indicator_to_lp.items():
         aggregated = None
         for lp_name in lp_list:
-            result = process_single_subprocess_scenario(
-                subprocess_name, lp_name, scenario_folder_path,
+            result = process_single_indicator_scenario(
+                indicator_name, lp_name, scenario_folder_path,
                 cf_df, bridge_matrices_df, thresholds_df,
             )
             if result is None:
@@ -496,20 +496,20 @@ def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, thresholds
 
         if aggregated is not None:
             aggregated["categories"] = colors.sort_categories(aggregated[IMPORTED].index.tolist())
-            data_by_subprocess[subprocess_name] = aggregated
+            data_by_indicator[indicator_name] = aggregated
 
-    return data_by_subprocess, subprocess_to_lp
+    return data_by_indicator, indicator_to_lp
 
 
-def process_subprocess_lp_breakdown(subprocess_name, scenario_folder_path, cf_df, thresholds_df):
-    """Absolute footprint (dom + imp + F_Y) of a sub-process for a scenario,
+def process_indicator_lp_breakdown(indicator_name, scenario_folder_path, cf_df, thresholds_df):
+    """Absolute footprint (dom + imp + F_Y) of a indicator for a scenario,
     broken down by LP (Earth-system process) of origin -- unlike
-    process_single_subprocess_scenario/process_scenario, which break down by
+    process_single_indicator_scenario/process_scenario, which break down by
     consumption category by summing all the LPs together, this function keeps
     each LP separate and does not break down by category.
 
     Used by plot_process_breakdown to show the share of each LP in the
-    footprint of a given sub-process (e.g. Biodiversity loss).
+    footprint of a given indicator (e.g. Biodiversity loss).
     Same dom/imp/World-Europe loading logic as _scenario_footprint_totals.
 
     Returns:
@@ -517,18 +517,18 @@ def process_subprocess_lp_breakdown(subprocess_name, scenario_folder_path, cf_df
         this scenario (possibly empty dict, a missing LP is never explicitly
         set to 0).
     """
-    subprocess_to_lp = get_unique_subprocesses(cf_df)
-    lp_list = subprocess_to_lp.get(subprocess_name, [])
+    indicator_to_lp = get_unique_indicators(cf_df)
+    lp_list = indicator_to_lp.get(indicator_name, [])
 
     is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
-    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, subprocess_name)
+    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
 
     lp_values = {}
     for lp_name in lp_list:
         if is_world_europe and lp_name == "ghg_combustion":
             continue
 
-        ext_map = build_extension_factor_map(cf_df, subprocess_name, lp_name)
+        ext_map = build_extension_factor_map(cf_df, indicator_name, lp_name)
         total = 0.0
         has_data = False
 
@@ -579,7 +579,7 @@ def scenario_has_dom_imp_split(scenario_folder_path):
 
 
 def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
-    """CBA and PBA footprint totals by sub-process, in raw Exiobase units
+    """CBA and PBA footprint totals by indicator, in raw Exiobase units
     (not converted) -- common base of process_scenario_absolute and
     process_scenario_per_capita.
 
@@ -589,13 +589,13 @@ def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
     these data).
 
     Returns:
-        {sub-process: (total_cba, total_pba)} -- only the sub-processes for
+        {indicator: (total_cba, total_pba)} -- only the indicators for
         which at least one file exists.
     """
-    subprocess_to_lp = get_unique_subprocesses(cf_df)
+    indicator_to_lp = get_unique_indicators(cf_df)
     totals = {}
 
-    for subprocess_name, lp_list in subprocess_to_lp.items():
+    for indicator_name, lp_list in indicator_to_lp.items():
         total_cba = 0.0
         total_pba = 0.0
         has_data = False
@@ -604,7 +604,7 @@ def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
             if is_world_europe and lp_name == "ghg_combustion":
                 continue
 
-            ext_map = build_extension_factor_map(cf_df, subprocess_name, lp_name)
+            ext_map = build_extension_factor_map(cf_df, indicator_name, lp_name)
 
             if is_world_europe:
                 d_cba = io.load_d_cba_world_europe(scenario_folder_path, lp_name)
@@ -637,7 +637,7 @@ def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
                     has_data = True
 
         if has_data:
-            totals[subprocess_name] = (total_cba, total_pba)
+            totals[indicator_name] = (total_cba, total_pba)
 
     return totals
 
@@ -655,7 +655,7 @@ def _pack_totals(cba, pba):
 
 def process_scenario_absolute(scenario_folder_path, cf_df, thresholds_df):
     """Total CBA and PBA footprint of a scenario, in absolute values ("Figures
-    unit" of thresholds.xlsx), for all sub-processes.
+    unit" of thresholds.xlsx), for all indicators.
 
     Formula: footprint = exiobase_total / Conversion ("Unit conversion Exiobase").
     Intended for plot_overshoot.create_overshoot_safe_space_figure_by_region,
@@ -665,24 +665,24 @@ def process_scenario_absolute(scenario_folder_path, cf_df, thresholds_df):
     Unlike process_scenario (also in absolute values, but restricted to the
     France scenarios since it breaks down the footprint by consumption
     category through the bridge matrix), this function only returns one total
-    per sub-process and also accepts the World/Europe scenarios.
+    per indicator and also accepts the World/Europe scenarios.
 
     Returns:
-        {sub-process: {DOMESTIC: Series([cba], index=["total"]),
+        {indicator: {DOMESTIC: Series([cba], index=["total"]),
                        IMPORTED: Series([0.0], index=["total"]),
                        "pba": pba (float), "categories": ["total"]}}
     """
     is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
     totals = _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe)
 
-    data_by_subprocess = {}
-    for subprocess_name, (total_cba, total_pba) in totals.items():
-        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, subprocess_name)
+    data_by_indicator = {}
+    for indicator_name, (total_cba, total_pba) in totals.items():
+        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
         if conversion is not None:
             total_cba, total_pba = total_cba / conversion, total_pba / conversion
-        data_by_subprocess[subprocess_name] = _pack_totals(total_cba, total_pba)
+        data_by_indicator[indicator_name] = _pack_totals(total_cba, total_pba)
 
-    return data_by_subprocess
+    return data_by_indicator
 
 
 def get_population(scenario_path, pop_df):
@@ -700,14 +700,14 @@ def get_population(scenario_path, pop_df):
 
 def process_scenario_per_capita(scenario_folder_path, cf_df, thresholds_df, pop_df):
     """Per-capita CBA (consumption-based, d_cba) and PBA (production-based,
-    F_x_dom) footprint for all the sub-processes of a scenario.
+    F_x_dom) footprint for all the indicators of a scenario.
 
     Formula: footprint_per_cap = exiobase_total / Conversion(p.cap) / population.
     Same totals as process_scenario_absolute (_scenario_footprint_totals), with
     the "(p.cap)" conversion row and the population of get_population.
 
     Returns:
-        {sub-process: {DOMESTIC: Series([cba_per_cap], index=["total"]),
+        {indicator: {DOMESTIC: Series([cba_per_cap], index=["total"]),
                        IMPORTED: Series([0.0], index=["total"]),
                        "pba": pba_per_cap (float), "categories": ["total"]}}
     """
@@ -715,10 +715,10 @@ def process_scenario_per_capita(scenario_folder_path, cf_df, thresholds_df, pop_
     population = get_population(scenario_folder_path, pop_df)
     totals = _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe)
 
-    data_by_subprocess = {}
-    for subprocess_name, (total_cba, total_pba) in totals.items():
-        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_PER_CAPITA, subprocess_name)
+    data_by_indicator = {}
+    for indicator_name, (total_cba, total_pba) in totals.items():
+        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_PER_CAPITA, indicator_name)
         divisor = population * (conversion if conversion is not None else 1.0)
-        data_by_subprocess[subprocess_name] = _pack_totals(total_cba / divisor, total_pba / divisor)
+        data_by_indicator[indicator_name] = _pack_totals(total_cba / divisor, total_pba / divisor)
 
-    return data_by_subprocess
+    return data_by_indicator

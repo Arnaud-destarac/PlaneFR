@@ -14,7 +14,7 @@ True by default -- the figure then combines both):
     distinctions; if both are False, the bar becomes solid again, colored with
     the color of the LP (shaded by scenario if show_pba=False, see below).
   - show_pba=True: production values (payload["pba"]). This is already a
-    single scalar in the source data (process_single_subprocess_scenario does
+    single scalar in the source data (process_single_indicator_scenario does
     not break it down by category or by dom/imp) -> each bar remains solid,
     colored with a lighter shade of the LP color (to distinguish it from the
     CBA when both are displayed), whatever show_categories/show_import_split
@@ -93,7 +93,7 @@ RADIAL_AXIS_MARGIN_FRAC = 0.02
 # No subtitle summarizing the order of the scenarios: for these two LPs, chosen
 # opposite each other on the wheel, the scenario name is recalled directly
 # above the (total/variation) cell matching it in the outer ring.
-SCENARIO_LABEL_SUBPROCESSES = ("Raw material consumption", "Blue water consumption")
+SCENARIO_LABEL_INDICATORS = ("Raw material consumption", "Blue water consumption")
 
 # scale_UB=True: common position (in multiples of the Safe Limit, before
 # radial_power) to which the Upper Safe Bound of each sector is brought -- same
@@ -311,11 +311,11 @@ def _format_overshoot(rel):
     return f"x{rel:.1f}"
 
 
-def _bdf_column(bdf_df, subprocess_name):
-    """Column of the BdF sheet matching the sub-process (named
-    "<sub-process> (<unit>)"), or None if missing."""
+def _bdf_column(bdf_df, indicator_name):
+    """Column of the BdF sheet matching the indicator (named
+    "<indicator> (<unit>)"), or None if missing."""
     for col in bdf_df.columns:
-        if str(col).split(" (")[0].strip() == subprocess_name:
+        if str(col).split(" (")[0].strip() == indicator_name:
             return col
     return None
 
@@ -499,7 +499,7 @@ def create_radial_synthesis_figure(
         all_scenarios_data = [all_scenarios_data[i] for i in display_order]
 
     first_scenario_data = all_scenarios_data[reference_idx]
-    subprocesses = list(first_scenario_data.keys())
+    indicators = list(first_scenario_data.keys())
 
     comp_df = None
     if is_bdf:
@@ -546,7 +546,7 @@ def create_radial_synthesis_figure(
         dls_levels = [(key, dls_prefix + suffix, color, label_prefix + label[len("DLS"):], "all")
                       for key, suffix, color, label in config.DLS_LEVELS]
 
-    n_lp = len(subprocesses)
+    n_lp = len(indicators)
     n_scenarios = len(scenario_names)
     # In combined mode, each scenario takes 2 adjacent slots (CBA then PBA):
     # the geometry is built for 2×n_scenarios virtual "slots", and the actual
@@ -575,54 +575,54 @@ def create_radial_synthesis_figure(
         if shares_df is None:
             shares_df = io.load_budget_shares_df()
         if sharing_principle == "EPC":
-            for pattern in {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_SUBPROCESS.values()}:
+            for pattern in {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_INDICATOR.values()}:
                 if not any(re.search(pattern, str(c), flags=re.IGNORECASE) for c in shares_df.columns):
                     raise ValueError(
                         f"No column of shares_df matches {pattern!r}: regenerate "
                         f"budget_shares.xlsx (\"UN – EPC\" columns)."
                     )
 
-    def threshold(threshold_row, threshold_kind, subprocess_name):
+    def threshold(threshold_row, threshold_kind, indicator_name):
         if is_share:
             # France budget = world budget x share of the "FR" row: UN EPC
             # ("UN – EPC 2050", or 2019-2100 for GHG, see config.radial_epc_pattern)
             # or reference CTR share ("CTR share ref. ...").
-            column_pattern = (config.radial_epc_pattern(subprocess_name)
+            column_pattern = (config.radial_epc_pattern(indicator_name)
                               if sharing_principle == "EPC" else None)
             return processing.compute_region_budget(
-                thresholds_df, shares_df, subprocess_name, config.RADIAL_EPC_REGION_CODE, sharing_principle,
+                thresholds_df, shares_df, indicator_name, config.RADIAL_EPC_REGION_CODE, sharing_principle,
                 threshold_kind=threshold_kind, column_pattern=column_pattern,
             )
-        return processing.lookup_threshold(thresholds_df, threshold_row, subprocess_name)
+        return processing.lookup_threshold(thresholds_df, threshold_row, indicator_name)
 
-    for subprocess_name in subprocesses:
-        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", subprocess_name)
-        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", subprocess_name)
-        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
-        unit_text = processing.lookup_first_text(thresholds_df, config.UNIT_ROW_ABS, subprocess_name)
+    for indicator_name in indicators:
+        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", indicator_name)
+        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", indicator_name)
+        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", indicator_name)
+        unit_text = processing.lookup_first_text(thresholds_df, config.UNIT_ROW_ABS, indicator_name)
         # DLS (and its bounds), by key of config.DLS_LEVELS; None if missing for this LP
         dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
             for key, dls_row, *_ in dls_levels:
-                dls_values[key] = processing.lookup_dls(dls_df, dls_row, subprocess_name)
+                dls_values[key] = processing.lookup_dls(dls_df, dls_row, indicator_name)
 
-        categories = (first_scenario_data.get(subprocess_name) or {}).get("categories", [])
+        categories = (first_scenario_data.get(indicator_name) or {}).get("categories", [])
         legend_categories.update(categories)
 
         if is_bdf:
             # 1 value per household category (Total first).
-            bdf_col = _bdf_column(bdf_df, subprocess_name)
+            bdf_col = _bdf_column(bdf_df, indicator_name)
             values = [float(v) for v in bdf_df[bdf_col]] if bdf_col is not None else [None] * n_scenarios
             # Thresholds specific to each category: national threshold x weight.
             weights = bdf_weights
             scale_values = values
             if bdf_compare:
-                comp_col = _bdf_column(comp_df, subprocess_name)
+                comp_col = _bdf_column(comp_df, indicator_name)
                 comp_values = ([float(v) for v in comp_df[comp_col]] if comp_col is not None
                                else [None] * n_scenarios)
         else:
-            cba_values = [processing.extract_value(sd.get(subprocess_name), "cba") for sd in all_scenarios_data]
-            pba_values = [processing.extract_value(sd.get(subprocess_name), "pba") for sd in all_scenarios_data]
+            cba_values = [processing.extract_value(sd.get(indicator_name), "cba") for sd in all_scenarios_data]
+            pba_values = [processing.extract_value(sd.get(indicator_name), "pba") for sd in all_scenarios_data]
             if combined:
                 values = []
                 for cba_val, pba_val in zip(cba_values, pba_values):
@@ -674,10 +674,10 @@ def create_radial_synthesis_figure(
                 max_rel = max(max_rel, _scale_rel(rel, slope))
 
         lp_info.append(dict(
-            name=subprocess_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
+            name=indicator_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
             values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, lower_rel=lower_rel,
             dls_rels=dls_rels, slope=slope, ub_slope=slope, comp_rel_values=comp_rel_values,
-            color=palette.get(subprocess_name, _FALLBACK_LP_COLOR),
+            color=palette.get(indicator_name, _FALLBACK_LP_COLOR),
         ))
 
     if r_max is not None:
@@ -721,10 +721,10 @@ def create_radial_synthesis_figure(
     r_ring_end = r_ring_start + ring_thickness
     r_label = r_max_plot * 0.78
     # Radius of the scenario names recalled above the cells of the outer ring
-    # (SCENARIO_LABEL_SUBPROCESSES only) -- just outside the ring, see
+    # (SCENARIO_LABEL_INDICATORS only) -- just outside the ring, see
     # _nice_radial_ticks/set_rlim below.
     r_scenario_label = r_ring_end + ring_thickness * 0.7
-    has_scenario_labels = any(name in SCENARIO_LABEL_SUBPROCESSES for name in subprocesses)
+    has_scenario_labels = any(name in SCENARIO_LABEL_INDICATORS for name in indicators)
 
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection="polar")
@@ -900,7 +900,7 @@ def create_radial_synthesis_figure(
         # for the 2 opposite LPs on the wheel (replaces the global "Scenario
         # order: ..." subtitle). In combined mode, a scenario takes 2 adjacent
         # cells (CBA then PBA): the name is centered above both.
-        if info["name"] in SCENARIO_LABEL_SUBPROCESSES:
+        if info["name"] in SCENARIO_LABEL_INDICATORS:
             for scenario_idx in range(n_scenarios):
                 if combined:
                     theta_label = (ring_centers[scenario_idx * 2] + ring_centers[scenario_idx * 2 + 1]) / 2

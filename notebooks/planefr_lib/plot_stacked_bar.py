@@ -1,5 +1,5 @@
 """
-Stacked bars by sub-process (create_stacked_bar_chart) and two multi-scenario
+Stacked bars by indicator (create_stacked_bar_chart) and two multi-scenario
 synthesis figures that assemble them into a grid:
   - create_synthesis_figure        : normalized in %, 1 grid with 2 columns
   - create_synthesis_figure_by_lp  : absolute values, 3x3 grid by LP, with
@@ -37,9 +37,9 @@ def _check_epc_columns(shares_df, epc_reference):
     epc_reference (see EPC_REFERENCES)."""
     if epc_reference == "region":
         patterns = {config.REGION_FIGURE_EPC_REF_PATTERN,
-                    *config.REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS.values()}
+                    *config.REGION_FIGURE_EPC_REF_PATTERN_BY_INDICATOR.values()}
     elif epc_reference == "radial":
-        patterns = {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_SUBPROCESS.values()}
+        patterns = {config.RADIAL_EPC_PATTERN, *config.RADIAL_EPC_PATTERN_BY_INDICATOR.values()}
     else:
         raise ValueError(f"Unknown epc_reference: {epc_reference!r} (expected: {', '.join(EPC_REFERENCES)})")
     for pattern in patterns:
@@ -50,7 +50,7 @@ def _check_epc_columns(shares_df, epc_reference):
             )
 
 
-def _share_threshold(thresholds_df, shares_df, subprocess_name, threshold_kind, sharing_principle,
+def _share_threshold(thresholds_df, shares_df, indicator_name, threshold_kind, sharing_principle,
                      epc_reference, use_2019_thresholds=False):
     """France budget (absolute values) = world budget x share of the
     config.RADIAL_EPC_REGION_CODE row ("FR") of budget_shares.xlsx:
@@ -60,15 +60,15 @@ def _share_threshold(thresholds_df, shares_df, subprocess_name, threshold_kind, 
     use_2019_thresholds (epc_reference="region" only): True to read the world
     budgets in the 2019 column of thresholds.xlsx when it exists (e.g. GHG
     emissions -> "GHG emissions (2019)", see config.region_figure_threshold_column);
-    False to keep the column of the sub-process ("GHG emissions").
+    False to keep the column of the indicator ("GHG emissions").
     """
     if epc_reference == "region":
-        threshold_column = (config.region_figure_threshold_column(subprocess_name)
-                            if use_2019_thresholds else subprocess_name)
-        column_pattern = config.region_figure_epc_ref_pattern(subprocess_name)
+        threshold_column = (config.region_figure_threshold_column(indicator_name)
+                            if use_2019_thresholds else indicator_name)
+        column_pattern = config.region_figure_epc_ref_pattern(indicator_name)
     else:
-        threshold_column = subprocess_name
-        column_pattern = config.radial_epc_pattern(subprocess_name)
+        threshold_column = indicator_name
+        column_pattern = config.radial_epc_pattern(indicator_name)
     if sharing_principle != "EPC":
         column_pattern = None  # reference share of the principle (e.g. "CTR share ref.")
     return processing.compute_region_budget(
@@ -106,21 +106,21 @@ def _build_category_legend(categories):
     return handles, labels
 
 
-def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp,
+def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
                               scenario_name="", reference_data=None, ax=None, show_legend=True,
                               group_by_category=True, sharing_principle=None,
                               shares_df=None, epc_reference="region", use_2019_thresholds=None,
                               show_values=True):
-    """Stacked bars in % showing the LPs by sub-process: dom (solid) + imp
+    """Stacked bars in % showing the LPs by indicator: dom (solid) + imp
     (hatched) stacked by consumption category. Annotates the absolute total,
     the variation relative to the reference scenario (if given), and the
     overshoot of the lower threshold.
 
     Args:
-        data_by_subprocess: {subprocess_name: result of process_single_subprocess_scenario}
-        subprocess_to_lp: sub-process -> [LP] mapping (not used directly here,
+        data_by_indicator: {indicator_name: result of process_single_indicator_scenario}
+        indicator_to_lp: indicator -> [LP] mapping (not used directly here,
             kept in the signature for consistency with the callers)
-        reference_data: data_by_subprocess of a reference scenario, to display
+        reference_data: data_by_indicator of a reference scenario, to display
             the relative variation (omit for the reference scenario itself)
         ax: existing matplotlib axis; if None, a new figure is created
         group_by_category: True (default) to stack dom/imp one after the other
@@ -159,15 +159,15 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
     shares_df = _prepare_shares(sharing_principle, shares_df, epc_reference)
     is_share = shares_df is not None
 
-    subprocesses = list(data_by_subprocess.keys())
-    n_subprocesses = len(subprocesses)
+    indicators = list(data_by_indicator.keys())
+    n_indicators = len(indicators)
 
-    if not any(data is not None for data in data_by_subprocess.values()):
+    if not any(data is not None for data in data_by_indicator.values()):
         print("No valid data to plot")
         return (None, None) if ax is None else (None, ax)
 
     all_categories = set()
-    for data in data_by_subprocess.values():
+    for data in data_by_indicator.values():
         if data is not None:
             all_categories.update(data["categories"])
     categories = colors.sort_categories(list(all_categories))
@@ -179,15 +179,15 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
 
     def heights_for(key, category):
         return np.array([
-            data_by_subprocess[sp][key].get(category, 0)
-            if (data_by_subprocess[sp] is not None and key in data_by_subprocess[sp]) else 0
-            for sp in subprocesses
+            data_by_indicator[sp][key].get(category, 0)
+            if (data_by_indicator[sp] is not None and key in data_by_indicator[sp]) else 0
+            for sp in indicators
         ])
 
     bar_width = 0.6
-    x_pos = np.arange(n_subprocesses)
+    x_pos = np.arange(n_indicators)
 
-    total_values = np.zeros(n_subprocesses)
+    total_values = np.zeros(n_indicators)
     for category in categories:
         total_values += heights_for(DOMESTIC, category) + heights_for(IMPORTED, category)
 
@@ -199,7 +199,7 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
                bottom=bottom_heights, color=color_dark, edgecolor="white", linewidth=0.5, hatch=hatch)
         return heights_pct
 
-    bottom_heights = np.zeros(n_subprocesses)
+    bottom_heights = np.zeros(n_indicators)
     if group_by_category:
         for cat_idx, category in enumerate(categories):
             bottom_heights = bottom_heights + draw_segment(category, cat_idx, DOMESTIC, bottom_heights)
@@ -211,7 +211,7 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
             bottom_heights = bottom_heights + draw_segment(category, cat_idx, IMPORTED, bottom_heights, hatch="/")
 
     for idx, total_val in enumerate(total_values):
-        sp = subprocesses[idx]
+        sp = indicators[idx]
 
         if show_values:
             unit_val = processing.lookup_first_text(thresholds_df, config.UNIT_ROW_ABS, sp)
@@ -243,7 +243,7 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
     if scenario_name:
         ax.set_title(f"{scenario_name} - Consumption-based", fontsize=12, fontweight="bold", pad=10)
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(subprocesses, rotation=30, ha="center", fontweight="bold", fontsize=10.5)
+    ax.set_xticklabels(indicators, rotation=30, ha="center", fontweight="bold", fontsize=10.5)
     ax.set_ylim(0, 110)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
 
@@ -260,7 +260,7 @@ def create_stacked_bar_chart(data_by_subprocess, thresholds_df, subprocess_to_lp
     return (fig, ax) if fig is not None else (None, ax)
 
 
-def create_synthesis_figure(all_scenarios_data, thresholds_df, subprocess_to_lp_list, scenario_names,
+def create_synthesis_figure(all_scenarios_data, thresholds_df, indicator_to_lp_list, scenario_names,
                              group_by_category=True, sharing_principle=None,
                              shares_df=None, show_values=True):
     """Grid of create_stacked_bar_chart for all the scenarios (2 columns, as
@@ -297,7 +297,7 @@ def create_synthesis_figure(all_scenarios_data, thresholds_df, subprocess_to_lp_
 
         is_reference = scenario_idx == reference_idx
         _, ax = create_stacked_bar_chart(
-            all_scenarios_data[scenario_idx], thresholds_df, subprocess_to_lp_list[scenario_idx],
+            all_scenarios_data[scenario_idx], thresholds_df, indicator_to_lp_list[scenario_idx],
             scenario_name=scenario_names[scenario_idx],
             reference_data=None if is_reference else reference_data,
             ax=ax, show_legend=False, group_by_category=group_by_category,
@@ -325,7 +325,7 @@ def create_synthesis_figure(all_scenarios_data, thresholds_df, subprocess_to_lp_
     return fig, axes_list
 
 
-def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_to_lp_list, scenario_names,
+def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_to_lp_list, scenario_names,
                                    dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
                                    show_values=True, show_thresholds=True, display_bounds=True,
                                    show_variation_bars=False,
@@ -384,11 +384,11 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
     """
     shares_df = _prepare_shares(sharing_principle, shares_df, epc_reference)
 
-    def threshold(threshold_row, threshold_kind, subprocess_name):
+    def threshold(threshold_row, threshold_kind, indicator_name):
         if shares_df is not None:
-            return _share_threshold(thresholds_df, shares_df, subprocess_name, threshold_kind,
+            return _share_threshold(thresholds_df, shares_df, indicator_name, threshold_kind,
                                     sharing_principle, epc_reference)
-        return processing.lookup_threshold(thresholds_df, threshold_row, subprocess_name)
+        return processing.lookup_threshold(thresholds_df, threshold_row, indicator_name)
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
     # The reference scenario (base_year) keeps its position, followed by the
@@ -400,11 +400,11 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
     display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
     scenario_names = [scenario_names[i] for i in display_order]
     all_scenarios_data = [all_scenarios_data[i] for i in display_order]
-    subprocess_to_lp_list = [subprocess_to_lp_list[i] for i in display_order]
+    indicator_to_lp_list = [indicator_to_lp_list[i] for i in display_order]
 
     first_scenario_data = all_scenarios_data[reference_idx]
-    subprocesses = list(first_scenario_data.keys())
-    n_lp = len(subprocesses)
+    indicators = list(first_scenario_data.keys())
+    n_lp = len(indicators)
 
     fig = plt.figure(figsize=(20, 14))
     gs = fig.add_gridspec(3, 3, hspace=0.2, wspace=0.15, top=0.93, bottom=0.12, left=0.045, right=0.99)
@@ -490,7 +490,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
 
     row_items = []
 
-    for lp_idx, subprocess_name in enumerate(subprocesses):
+    for lp_idx, indicator_name in enumerate(indicators):
         if lp_idx >= len(positions):
             break
 
@@ -502,13 +502,13 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
         bar_width = 0.6
         x_pos = np.arange(n_scenarios)
 
-        categories = first_scenario_data[subprocess_name]["categories"]
+        categories = first_scenario_data[indicator_name]["categories"]
         legend_categories.update(categories)
 
         def heights_for(scenario_data, key, category):
-            if subprocess_name not in scenario_data:
+            if indicator_name not in scenario_data:
                 return 0
-            return scenario_data[subprocess_name][key].get(category, 0)
+            return scenario_data[indicator_name][key].get(category, 0)
 
         # FIRST PASS: absolute totals by scenario (to size the Y axis)
         total_values = np.zeros(n_scenarios)
@@ -523,7 +523,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
 
         if show_pba:
             pba_values = [
-                scenario_data[subprocess_name].get("pba") if subprocess_name in scenario_data else None
+                scenario_data[indicator_name].get("pba") if indicator_name in scenario_data else None
                 for scenario_data in all_scenarios_data
             ]
             finite_pba = [float(v) for v in pba_values if v is not None and np.isfinite(v)]
@@ -532,14 +532,14 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
             pba_values = [None] * n_scenarios
             max_pba = 0.0
 
-        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", subprocess_name)
-        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", subprocess_name)
+        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", indicator_name)
+        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", indicator_name)
         # DLS (and its bounds), by key of config.DLS_LEVELS; None if missing for this LP
         dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
             for key, dls_row, *_ in dls_levels:
-                dls_values[key] = processing.lookup_dls(dls_df, dls_row, subprocess_name)
-        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", subprocess_name)
+                dls_values[key] = processing.lookup_dls(dls_df, dls_row, indicator_name)
+        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", indicator_name)
 
         if not show_thresholds:
             # Hides all the threshold lines (Lower Safe Bound/Safe Limit/Upper
@@ -727,7 +727,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, subprocess_
             ax_top.plot((1 - d, 1 + d), (-d, +d), **kwargs)
 
         (ax_top if (use_break and ax_top is not None) else ax).set_title(
-            subprocess_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
+            indicator_name, fontsize=14, fontweight="bold", pad=6 if use_break else 8)
 
         ax.set_xticks(x_pos)
         ax.set_xticklabels(scenario_names, rotation=0, ha="center", fontweight="bold", fontsize=10.5)

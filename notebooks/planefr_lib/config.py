@@ -48,7 +48,7 @@ CF_AGRI_SHEET = "Agri"
 
 # Columns (matched case-insensitively by io.load_characterization_factors,
 # since the "All" and "Agri" sheets do not use the same capitalization).
-CF_SUBPROCESS_COL = "Indicators"                 # sub-process (= thresholds.xlsx column)
+CF_INDICATOR_COL = "Indicators"                 # indicator (= thresholds.xlsx column)
 CF_LP_COL = "EXIOBASE groups"                    # LP = extension folder (dom_{lp}/imp_{lp})
 CF_STRESSOR_COL = "EXIOBASE stressors"           # EXIOBASE stressor (row of the MRIO tables)
 CF_UNIT_COL = "Units"
@@ -157,7 +157,7 @@ def get_scenario_folders(exclude_2019=False, exclude_others=False, scenario_grou
 # ============================================================================
 # THRESHOLDS: row names of thresholds.xlsx (sheet "All")
 # ============================================================================
-# 3 thresholds per sub-process, from the strictest to the loosest -- figure
+# 3 thresholds per indicator, from the strictest to the loosest -- figure
 # names taken from the "raw" rows of thresholds.xlsx (WORLD_BUDGET_ROW_LOWER/
 # LB/UB below): LOWER ("Lower Safe Bound", row "Equality (Lower bound)") < LB
 # ("Safe Limit", historical threshold, row "Equality") < UB ("Upper Safe
@@ -180,7 +180,7 @@ WORLD_BUDGET_ROW_LOWER = "Lower safe bound"
 WORLD_BUDGET_ROW_LB = "Safe limit"
 WORLD_BUDGET_ROW_UB = "Upper safe bound"
 
-# Conversion factor "Unit budget" (world) -> "Figures unit", by sub-process
+# Conversion factor "Unit budget" (world) -> "Figures unit", by indicator
 # (e.g. GHG emissions: GtCO2eq -> MtCO2eq): row used as a divisor, like
 # CONVERSION_ROW_ABS.
 WORLD_CONVERSION_ROW_ABS = "Unit conversion budget"
@@ -246,60 +246,60 @@ BUDGET_SHARES_VARIANTS_SHEET = "Budget_shares_variants"
 UN_SHARE_COLUMN_PATTERN = r"^UN\W+EPC\b"
 
 # Reference EPC of plot_overshoot.create_overshoot_safe_space_figure_by_region:
-# UN column (regex pattern) used by default, and exceptions by sub-process
+# UN column (regex pattern) used by default, and exceptions by indicator
 # (column name of thresholds.xlsx/"All", compared case-insensitively).
 # Replaces the "EPC share ref. ..." column for the reference only: the
 # sensitivity bounds remain "EPC min" / "EPC max".
 REGION_FIGURE_EPC_REF_PATTERN = r"^UN\W+EPC\s+2019$"
-REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS = {
+REGION_FIGURE_EPC_REF_PATTERN_BY_INDICATOR = {
     "GHG emissions": r"^UN\W+EPC\s+2019-2100$",
     "GHG emissions (2019)": r"^UN\W+EPC\s+2019-2100$",
 }
 
 # Column of thresholds.xlsx/"All" giving the world budgets (Lower / Safe limit /
-# Upper) of a sub-process in that same figure, when it differs from the name
-# of the sub-process. The footprints and the displayed unit remain those of
-# the original sub-process.
-REGION_FIGURE_THRESHOLD_COLUMN_BY_SUBPROCESS = {
+# Upper) of a indicator in that same figure, when it differs from the name
+# of the indicator. The footprints and the displayed unit remain those of
+# the original indicator.
+REGION_FIGURE_THRESHOLD_COLUMN_BY_INDICATOR = {
     "GHG emissions": "GHG emissions (2019)",
 }
 
 
-def _lookup_ci(mapping, subprocess_name, default):
-    key = str(subprocess_name).strip().casefold()
+def _lookup_ci(mapping, indicator_name, default):
+    key = str(indicator_name).strip().casefold()
     for name, value in mapping.items():
         if name.casefold() == key:
             return value
     return default
 
 
-def region_figure_epc_ref_pattern(subprocess_name):
-    """Pattern of the reference EPC column for `subprocess_name` (see above)."""
-    return _lookup_ci(REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS, subprocess_name,
+def region_figure_epc_ref_pattern(indicator_name):
+    """Pattern of the reference EPC column for `indicator_name` (see above)."""
+    return _lookup_ci(REGION_FIGURE_EPC_REF_PATTERN_BY_INDICATOR, indicator_name,
                       REGION_FIGURE_EPC_REF_PATTERN)
 
 
 # sharing_principle="EPC" of plot_radial_synthesis.create_radial_synthesis_figure:
 # France budget = world budget x share of the RADIAL_EPC_REGION_CODE row of
 # budget_shares.xlsx, read in the UN column below (regex pattern), with
-# exceptions by sub-process (compared case-insensitively).
+# exceptions by indicator (compared case-insensitively).
 RADIAL_EPC_REGION_CODE = "FR"
 RADIAL_EPC_PATTERN = r"^UN\W+EPC\s+2050$"
-RADIAL_EPC_PATTERN_BY_SUBPROCESS = {
+RADIAL_EPC_PATTERN_BY_INDICATOR = {
     "GHG emissions": r"^UN\W+EPC\s+2019-2100$",
     "GHG emissions (2019)": r"^UN\W+EPC\s+2019-2100$",
 }
 
 
-def radial_epc_pattern(subprocess_name):
-    """Pattern of the EPC column used by the radial figure for `subprocess_name`."""
-    return _lookup_ci(RADIAL_EPC_PATTERN_BY_SUBPROCESS, subprocess_name, RADIAL_EPC_PATTERN)
+def radial_epc_pattern(indicator_name):
+    """Pattern of the EPC column used by the radial figure for `indicator_name`."""
+    return _lookup_ci(RADIAL_EPC_PATTERN_BY_INDICATOR, indicator_name, RADIAL_EPC_PATTERN)
 
 
-def region_figure_threshold_column(subprocess_name):
-    """Column of thresholds.xlsx holding the budgets of `subprocess_name` in
+def region_figure_threshold_column(indicator_name):
+    """Column of thresholds.xlsx holding the budgets of `indicator_name` in
     create_overshoot_safe_space_figure_by_region (see above)."""
-    return _lookup_ci(REGION_FIGURE_THRESHOLD_COLUMN_BY_SUBPROCESS, subprocess_name, subprocess_name)
+    return _lookup_ci(REGION_FIGURE_THRESHOLD_COLUMN_BY_INDICATOR, indicator_name, indicator_name)
 
 
 # World region code in budget_shares.xlsx (share 1, without min/max bounds: its

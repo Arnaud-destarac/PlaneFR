@@ -1,7 +1,7 @@
 """
 Contribution of the different Earth-system processes (LP, "EXIOBASE groups"
 column of characterization_factors.xlsx) to the footprint of the
-"Biodiversity loss" sub-process, in % of the total footprint -- one 100 %
+"Biodiversity loss" indicator, in % of the total footprint -- one 100 %
 stacked bar per France scenario (base scenario + 2050 transition scenarios,
 see config.get_scenario_folders).
 
@@ -23,9 +23,9 @@ if str(notebooks_dir) not in sys.path:
 import matplotlib.pyplot as plt
 
 from planefr_lib import config, io, processing
-from planefr_lib.plot_process_breakdown import create_subprocess_contribution_chart
+from planefr_lib.plot_process_breakdown import create_indicator_contribution_chart
 
-SUBPROCESS_NAME = "Biodiversity loss - PDF"
+INDICATOR_NAME = "Biodiversity loss - PDF"
 
 
 def main():
@@ -38,14 +38,14 @@ def main():
 
     lp_values_by_scenario = []
     for scenario_folder in scenario_folders:
-        lp_values = processing.process_subprocess_lp_breakdown(
-            SUBPROCESS_NAME, scenario_folder, cf_df, thresholds_df,
+        lp_values = processing.process_indicator_lp_breakdown(
+            INDICATOR_NAME, scenario_folder, cf_df, thresholds_df,
         )
         lp_values_by_scenario.append(lp_values)
         print(f"  {scenario_folder.name}: {lp_values}")
 
-    fig, _ = create_subprocess_contribution_chart(
-        lp_values_by_scenario, scenario_names, subprocess_name=SUBPROCESS_NAME,
+    fig, _ = create_indicator_contribution_chart(
+        lp_values_by_scenario, scenario_names, indicator_name=INDICATOR_NAME,
     )
 
     config.FIGURES_DIR.mkdir(parents=True, exist_ok=True)

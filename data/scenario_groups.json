@@ -1,0 +1,27 @@
+{
+  "description": "Scenario groups displayed by the figures and assembled from engine outputs. Each group is a sub-folder of data/<version>/; each entry maps the displayed folder name to its source, a scenario folder written by the pipeline, relative to data/<version>/. Built by MatMat/matmat-ademe/scripts/build_scenario_groups.py (last step of the pipeline). Do not edit the group folders by hand: they are overwritten.",
+  "groups": {
+    "ADEME": {
+      "2015": "no_SSP/Base_year_2015",
+      "S1": "no_SSP/S1_2050",
+      "S2": "no_SSP/S2_2050",
+      "S3": "no_SSP/S3_2050",
+      "S4": "no_SSP/S4_2050",
+      "TREND": "no_SSP/TEND_2050"
+    },
+    "PAPER": {
+      "2015": "no_SSP/Base_year_2015",
+      "S1": "no_SSP/S1_2050",
+      "S1+": "SSP2_19_Sus_2050/S1_2050",
+      "S4": "no_SSP/S4_2050",
+      "TREND": "no_SSP/TEND_2050"
+    },
+    "S1+": {
+      "2019_FR": "2019_FR",
+      "S1_2050": "SSP2_19_Sus_2050/S1_2050"
+    },
+    "Base_year": {
+      "2019_FR": "2019_FR"
+    }
+  }
+}

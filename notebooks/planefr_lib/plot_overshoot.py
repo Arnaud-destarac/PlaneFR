@@ -59,13 +59,13 @@ def _fmt_abs(value):
 
 
 def _total_footprint(lp_payload):
-    """Total footprint (domestic + imported) for a sub-process."""
+    """Total footprint (domestic + imported) for a indicator."""
     return float(lp_payload[DOMESTIC].sum() + lp_payload[IMPORTED].sum())
 
 
-def _get_lp_unit(thresholds_df, subprocess_name, unit_row):
+def _get_lp_unit(thresholds_df, indicator_name, unit_row):
     """Get the display unit of an LP, or "" if missing."""
-    return processing.lookup_first_text(thresholds_df, unit_row, subprocess_name)
+    return processing.lookup_first_text(thresholds_df, unit_row, indicator_name)
 
 
 def _draw_gradient_segment(ax, x0, x1, seg_colors, y0=0.10, y1=0.90):
@@ -219,7 +219,7 @@ MAX_ROW_HEIGHT_FACTOR_REGION = 3.5
 def _find_region_scenario_idx(scenario_names, region_codes):
     """Index of the reference scenario (region code = config.DEFAULT_REGION_CODE,
     "FR") in scenario_names, used to sort the LPs by CBA overshoot (see
-    _sort_subprocesses_by_region_overshoot). If no scenario has this code,
+    _sort_indicators_by_region_overshoot). If no scenario has this code,
     falls back to config.REFERENCE_SCENARIO_IDX."""
     for idx, name in enumerate(scenario_names):
         if str(region_codes.get(name, "")).upper() == config.DEFAULT_REGION_CODE:
@@ -227,43 +227,43 @@ def _find_region_scenario_idx(scenario_names, region_codes):
     return config.REFERENCE_SCENARIO_IDX
 
 
-def _union_subprocesses(all_scenarios_data):
-    """List of the sub-processes (rows of the figure) present in AT LEAST ONE
+def _union_indicators(all_scenarios_data):
+    """List of the indicators (rows of the figure) present in AT LEAST ONE
     scenario, in their order of first appearance.
 
     Not limited to the keys of a single reference scenario: the scenarios are
-    loaded from files that may be partial for a given sub-process (data
+    loaded from files that may be partial for a given indicator (data
     pipeline still being written, LP missing for a geography...) -- taking a
     single scenario as the reference would make the whole figure disappear if
     that one happens to be incomplete, or would hide an LP that other scenarios
     did compute."""
-    subprocesses = []
+    indicators = []
     seen = set()
     for scenario_data in all_scenarios_data:
         for name in scenario_data.keys():
             if name not in seen:
                 seen.add(name)
-                subprocesses.append(name)
-    return subprocesses
+                indicators.append(name)
+    return indicators
 
 
-def _sort_subprocesses_by_region_overshoot(subprocesses, scenario_names, all_scenarios_data,
+def _sort_indicators_by_region_overshoot(indicators, scenario_names, all_scenarios_data,
                                             budget_of, region_codes):
     """Sort the LPs (rows of the figure) by increasing overshoot of the France
     scenario (max of CBA and PBA, if PBA is present): the further right the
     rightmost France bubble of a bar, the lower this bar is displayed relative
     to the others.
 
-    budget_of(subprocess_name, scenario_name) gives the budget ("1L") to
+    budget_of(indicator_name, scenario_name) gives the budget ("1L") to
     compare the footprint with -- it depends on the scenario, each country
     having its own share of the world budget."""
     region_idx = _find_region_scenario_idx(scenario_names, region_codes)
     region_data = all_scenarios_data[region_idx]
     region_name = scenario_names[region_idx]
 
-    def sort_key(subprocess_name):
-        payload = region_data.get(subprocess_name)
-        lb_val = budget_of(subprocess_name, region_name)
+    def sort_key(indicator_name):
+        payload = region_data.get(indicator_name)
+        lb_val = budget_of(indicator_name, region_name)
         if payload is None or not lb_val:
             return float("-inf")
         rel_cba = _total_footprint(payload) / lb_val
@@ -272,7 +272,7 @@ def _sort_subprocesses_by_region_overshoot(subprocesses, scenario_names, all_sce
         rel_max = max(rel_cba, rel_pba)
         return rel_max if np.isfinite(rel_max) else float("-inf")
 
-    return sorted(subprocesses, key=sort_key)
+    return sorted(indicators, key=sort_key)
 
 
 def _relative_bounds(abs_value, budget_min, budget_max):
@@ -380,7 +380,7 @@ def create_overshoot_safe_space_figure_by_region(
             only required for the sensitivity of W.
         scale_UB: if False (default), common scale for all the rows, in
             multiples of the lower limit (1L, 2L, 3L...). If True, the scale of
-            each row is specific to its sub-process, piecewise linear:
+            each row is specific to its indicator, piecewise linear:
             unchanged between 0 and the Safe Limit (1L), then stretched or
             compressed so that the Upper Safe Bound falls exactly on the
             "Increasing Risk" / "High-Risk Zone" boundary (formerly 2L); beyond
@@ -446,7 +446,7 @@ def create_overshoot_safe_space_figure_by_region(
     # 2019-2100" for GHG): see config.region_figure_epc_ref_pattern.
     if sharing_principle == "EPC":
         for pattern in {config.REGION_FIGURE_EPC_REF_PATTERN,
-                        *config.REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS.values()}:
+                        *config.REGION_FIGURE_EPC_REF_PATTERN_BY_INDICATOR.values()}:
             if not any(re.search(pattern, str(c), flags=re.IGNORECASE) for c in shares_df.columns):
                 raise ValueError(
                     f"No column of shares_df matches {pattern!r}: regenerate "
@@ -454,12 +454,12 @@ def create_overshoot_safe_space_figure_by_region(
                     f"io.load_budget_shares_df."
                 )
 
-    def budget_of(subprocess_name, scenario_name, threshold_kind="lb", variant="ref"):
-        column_pattern = (config.region_figure_epc_ref_pattern(subprocess_name)
+    def budget_of(indicator_name, scenario_name, threshold_kind="lb", variant="ref"):
+        column_pattern = (config.region_figure_epc_ref_pattern(indicator_name)
                           if sharing_principle == "EPC" and variant == "ref" else None)
         # Column of thresholds.xlsx holding the budgets (e.g. GHG emissions ->
         # GHG emissions (2019)): see config.region_figure_threshold_column.
-        threshold_column = config.region_figure_threshold_column(subprocess_name)
+        threshold_column = config.region_figure_threshold_column(indicator_name)
         budget = processing.compute_region_budget(
             thresholds_df, shares_df, threshold_column, codes[scenario_name],
             sharing_principle, variant=variant, threshold_kind=threshold_kind,
@@ -479,16 +479,16 @@ def create_overshoot_safe_space_figure_by_region(
                 return min(period_budgets) if variant == "min" else max(period_budgets)
         return budget
 
-    subprocesses = _union_subprocesses(all_scenarios_data)
-    if not subprocesses:
+    indicators = _union_indicators(all_scenarios_data)
+    if not indicators:
         raise ValueError(
-            "No sub-process found in all_scenarios_data (all the scenarios are empty) -- "
+            "No indicator found in all_scenarios_data (all the scenarios are empty) -- "
             "check that the processing of the scenario folders did produce data."
         )
-    subprocesses = _sort_subprocesses_by_region_overshoot(
-        subprocesses, scenario_names, all_scenarios_data, budget_of, codes,
+    indicators = _sort_indicators_by_region_overshoot(
+        indicators, scenario_names, all_scenarios_data, budget_of, codes,
     )
-    n_lp = len(subprocesses)
+    n_lp = len(indicators)
 
     scenario_style = colors.region_code_style_map(codes)
     y_levels = np.linspace(0.82, 0.18, len(scenario_names)) if len(scenario_names) > 1 else np.array([0.5])
@@ -512,13 +512,13 @@ def create_overshoot_safe_space_figure_by_region(
     fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
     gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
-    def compute_row(subprocess_name):
+    def compute_row(indicator_name):
         """Budgets, limits and positions (rescaled if scale_UB) of the bubbles
         of a row, or None if no budget is available."""
         # One budget per scenario (= per country): the reference budget is
         # used to position the bubbles of this scenario, and the min/max
         # budgets to bound the sensitivity segment.
-        budgets = {name: budget_of(subprocess_name, name) for name in scenario_names}
+        budgets = {name: budget_of(indicator_name, name) for name in scenario_names}
         if all(b is None for b in budgets.values()):
             return None
 
@@ -528,8 +528,8 @@ def create_overshoot_safe_space_figure_by_region(
         # They are therefore computed with the budget of the reference scenario.
         ref_name = next(name for name in scenario_names if budgets[name])
         ref_lb = budgets[ref_name]
-        lower_val = budget_of(subprocess_name, ref_name, threshold_kind="lower")
-        ub_val = budget_of(subprocess_name, ref_name, threshold_kind="ub")
+        lower_val = budget_of(indicator_name, ref_name, threshold_kind="lower")
+        ub_val = budget_of(indicator_name, ref_name, threshold_kind="ub")
         lower_rel = (lower_val / ref_lb) if lower_val is not None else None
         ub_rel = (ub_val / ref_lb) if ub_val is not None else None
 
@@ -563,9 +563,9 @@ def create_overshoot_safe_space_figure_by_region(
         for scenario_idx, scenario_data in enumerate(all_scenarios_data):
             sname = scenario_names[scenario_idx]
             lb_val = budgets[sname]
-            if subprocess_name not in scenario_data or not lb_val:
+            if indicator_name not in scenario_data or not lb_val:
                 continue
-            payload = scenario_data[subprocess_name]
+            payload = scenario_data[indicator_name]
             abs_cba = _total_footprint(payload)
             rel_cba = abs_cba / lb_val
             if not np.isfinite(rel_cba):
@@ -577,8 +577,8 @@ def create_overshoot_safe_space_figure_by_region(
             rel_cba_min = rel_cba_max = None
             rel_pba_min = rel_pba_max = None
             if sensitivity:
-                budget_min = budget_of(subprocess_name, sname, variant="min")
-                budget_max = budget_of(subprocess_name, sname, variant="max")
+                budget_min = budget_of(indicator_name, sname, variant="min")
+                budget_max = budget_of(indicator_name, sname, variant="max")
                 rel_cba_min, rel_cba_max = _relative_bounds(abs_cba, budget_min, budget_max)
                 if abs_pba is not None:
                     rel_pba_min, rel_pba_max = _relative_bounds(abs_pba, budget_min, budget_max)
@@ -594,7 +594,7 @@ def create_overshoot_safe_space_figure_by_region(
         return {"budgets": budgets, "ref_lb": ref_lb, "lower_rel": lower_rel, "ub_rel": ub_rel,
                 "scaled": scaled, "unscaled": unscaled, "points": points}
 
-    rows = {name: compute_row(name) for name in subprocesses}
+    rows = {name: compute_row(name) for name in indicators}
 
     # scale_UB=True: no axis break. The main axis takes the full width, and its
     # right bound is common to all the rows (to keep the Safe Limit/UB lines
@@ -612,7 +612,7 @@ def create_overshoot_safe_space_figure_by_region(
     top_main_ax = None
     value_axes = []
 
-    for row_idx, subprocess_name in enumerate(subprocesses):
+    for row_idx, indicator_name in enumerate(indicators):
         ax = fig.add_subplot(gs[row_idx, :] if scale_UB else gs[row_idx, 0])
         ax_ext = fig.add_subplot(gs[row_idx, 1], sharey=ax)
         ax.set_zorder(3)
@@ -621,11 +621,11 @@ def create_overshoot_safe_space_figure_by_region(
         if row_idx == 0:
             top_main_ax = ax
 
-        unit_text = _get_lp_unit(thresholds_df, subprocess_name, unit_row) if show_value_bounds else ""
+        unit_text = _get_lp_unit(thresholds_df, indicator_name, unit_row) if show_value_bounds else ""
 
-        row = rows[subprocess_name]
+        row = rows[indicator_name]
         if row is None:
-            ax.text(0.5, 0.5, f"{subprocess_name}: missing lower limit", transform=ax.transAxes,
+            ax.text(0.5, 0.5, f"{indicator_name}: missing lower limit", transform=ax.transAxes,
                     ha="center", va="center", fontsize=10, color="#7a7a7a")
             ax.set_xlim(0, x_axis_max)
             ax.set_ylim(0, 1)
@@ -729,10 +729,10 @@ def create_overshoot_safe_space_figure_by_region(
         # hspace is sized (see above) to also leave room for the ticks of the
         # shared X axis above it.
         if title_above_bar:
-            _draw_lp_title_above(ax, subprocess_name, unit_text, 1.0 + hspace,
+            _draw_lp_title_above(ax, indicator_name, unit_text, 1.0 + hspace,
                                   title_gap_below_bar + value_axis_extra, title_gap_above_bar)
         else:
-            ax.text(-0.03, 0.57, subprocess_name, transform=ax.transAxes, ha="right", va="center",
+            ax.text(-0.03, 0.57, indicator_name, transform=ax.transAxes, ha="right", va="center",
                     fontsize=13, fontweight="bold")
             if unit_text:
                 ax.text(-0.03, 0.39, f"({unit_text})", transform=ax.transAxes, ha="right", va="center",

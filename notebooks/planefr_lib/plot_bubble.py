@@ -1,5 +1,5 @@
 """
-Bubble chart by sub-process: for each consumption category (Food, Housing,
+Bubble chart by indicator: for each consumption category (Food, Housing,
 Mobility, Final goods, Final services) or each sector, 2 vertically stacked
 bubbles -- M_dom+M_imp (French products, size Y_dom) and M_row (imported
 products, size Y_imp).
@@ -10,8 +10,8 @@ Aggregation by WEIGHTED MEAN: for each category, each product flagged in the
 matching) -- see build_bridge_to_y_mapping().
 
 Two-step pipeline:
-  1. export_subprocess_tables_excel: 1 workbook per scenario, 1 sheet per
-     sub-process (columns = sectors + categories, rows = M_imp/M_dom/
+  1. export_indicator_tables_excel: 1 workbook per scenario, 1 sheet per
+     indicator (columns = sectors + categories, rows = M_imp/M_dom/
      M_row/Y_imp/Y_dom and M*Y products), sectors sorted according to the row
      chosen in B1 (editable by hand in Excel).
   2. plot_bubble_chart: bubble chart read back from these workbooks, by
@@ -131,19 +131,19 @@ def aggregate_y_for_sizes(y_5cols, bridge_m, bridge_to_y_col):
     return pd.Series(out)
 
 
-def compute_subprocess_m_sector_vectors(scenario_folder_path, cf_df):
-    """M_dom/M_imp/M_row by sector (200 products), aggregated by sub-process
+def compute_indicator_m_sector_vectors(scenario_folder_path, cf_df):
+    """M_dom/M_imp/M_row by sector (200 products), aggregated by indicator
     (sum over all the associated LPs, weighted by the characterization factors).
 
     Returns:
         {name: {"M_dom", "M_imp", "M_row"}} -- Series indexed by sector.
     """
-    subprocess_to_lp = processing.get_unique_subprocesses(cf_df)
+    indicator_to_lp = processing.get_unique_indicators(cf_df)
 
     sector_vectors = {}
-    for subprocess_name, lp_list in subprocess_to_lp.items():
+    for indicator_name, lp_list in indicator_to_lp.items():
         agg_dom = agg_imp = agg_row = None
-        extension_factor_map = processing.build_extension_factor_map(cf_df, subprocess_name)
+        extension_factor_map = processing.build_extension_factor_map(cf_df, indicator_name)
 
         for lp_name in lp_list:
             m_dom_df = io.load_m_matrix(scenario_folder_path, lp_name, "dom")
@@ -166,7 +166,7 @@ def compute_subprocess_m_sector_vectors(scenario_folder_path, cf_df):
         if agg_dom is None:
             continue
 
-        sector_vectors[subprocess_name] = {"M_dom": agg_dom, "M_imp": agg_imp, "M_row": agg_row}
+        sector_vectors[indicator_name] = {"M_dom": agg_dom, "M_imp": agg_imp, "M_row": agg_row}
 
     return sector_vectors
 
@@ -194,7 +194,7 @@ def _excel_sheet_name(name, used_names):
 TOTAL_FOOTPRINT_ROW = "M_imp*Y_dom+M_dom*Y_dom+M_row*Y_imp"
 
 # Labels of column A delimiting the "source data" block of a sheet: written by
-# _write_sortable_sheet, read back by load_subprocess_tables_excel. The
+# _write_sortable_sheet, read back by load_indicator_tables_excel. The
 # *_LEGACY labels are those of the workbooks written by an earlier (French)
 # version of this module, still accepted when reading back.
 SOURCE_BLOCK_TITLE = "Source data (bridge order, unsorted)"
@@ -220,8 +220,8 @@ EXCLUDED_SECTORS = (
 )
 
 
-def build_subprocess_tables(scenario_folder_path, cf_df, bridge_m):
-    """Table by sub-process: 1 column per sector (200 products of the M bridge)
+def build_indicator_tables(scenario_folder_path, cf_df, bridge_m):
+    """Table by indicator: 1 column per sector (200 products of the M bridge)
     + 1 column per consumption category, 1 row per data item (M_imp, M_dom,
     M_row, Y_imp, Y_dom, then the M*Y products and their sums).
 
@@ -242,7 +242,7 @@ def build_subprocess_tables(scenario_folder_path, cf_df, bridge_m):
     positional alignment on the 200 products).
 
     Returns:
-        {subprocess_name: pd.DataFrame}
+        {indicator_name: pd.DataFrame}
     """
     kept_sectors = ~bridge_m.index.isin(EXCLUDED_SECTORS)
     bridge_m = bridge_m.mul(kept_sectors, axis=0)
@@ -250,7 +250,7 @@ def build_subprocess_tables(scenario_folder_path, cf_df, bridge_m):
 
     y_dom_5, y_imp_5 = io.get_y_blocks(scenario_folder_path, excluded_y_categories=EXCLUDED_Y_CATEGORIES)
     bridge_to_y_col = build_bridge_to_y_mapping(list(bridge_m.columns), list(y_dom_5.columns))
-    sector_vectors = compute_subprocess_m_sector_vectors(scenario_folder_path, cf_df)
+    sector_vectors = compute_indicator_m_sector_vectors(scenario_folder_path, cf_df)
 
     y_dom_sector = align_series_to_bridge(y_dom_5.iloc[:, 0], bridge_m)
     y_imp_sector = align_series_to_bridge(y_imp_5.iloc[:, 0], bridge_m)
@@ -258,7 +258,7 @@ def build_subprocess_tables(scenario_folder_path, cf_df, bridge_m):
     y_imp_cat = aggregate_y_for_sizes(y_imp_5, bridge_m, bridge_to_y_col)
 
     tables = {}
-    for subprocess_name, vecs in sector_vectors.items():
+    for indicator_name, vecs in sector_vectors.items():
         rows = {
             "M_imp": (align_series_to_bridge(vecs["M_imp"], bridge_m),
                       weighted_mean_by_category(vecs["M_imp"], y_dom_5, bridge_m, bridge_to_y_col)),
@@ -277,11 +277,11 @@ def build_subprocess_tables(scenario_folder_path, cf_df, bridge_m):
         table.loc["M_imp*Y_dom+M_dom*Y_dom"] = table.loc["M_imp*Y_dom"] + table.loc["M_dom*Y_dom"]
         table.loc["M_row*Y_imp"] = table.loc["M_row"] * table.loc["Y_imp"]
         table.loc[TOTAL_FOOTPRINT_ROW] = table.loc["M_imp*Y_dom+M_dom*Y_dom"] + table.loc["M_row*Y_imp"]
-        tables[subprocess_name] = table.loc[:, kept_columns]
+        tables[indicator_name] = table.loc[:, kept_columns]
     return tables
 
 
-def _write_sortable_sheet(ws, subprocess_name, table, n_sectors, sort_row):
+def _write_sortable_sheet(ws, indicator_name, table, n_sectors, sort_row):
     """Write a sheet whose columns are sorted by Excel formulas, in decreasing
     order of the row named in B1 (drop-down list, editable by hand): the
     sectors among themselves, then the categories among themselves. Layout:
@@ -325,7 +325,7 @@ def _write_sortable_sheet(ws, subprocess_name, table, n_sectors, sort_row):
 
     # Source data (raw values, bridge order)
     ws.cell(src_title, 1, SOURCE_BLOCK_TITLE).font = bold
-    ws.cell(src_header, 1, subprocess_name).font = bold
+    ws.cell(src_header, 1, indicator_name).font = bold
     for j, name in enumerate(table.columns, start=2):
         ws.cell(src_header, j, str(name)).font = bold
     for i, label in enumerate(labels):
@@ -340,7 +340,7 @@ def _write_sortable_sheet(ws, subprocess_name, table, n_sectors, sort_row):
         c = get_column_letter(j)
         ws.cell(key_row, j, f"=INDEX({c}${src_first}:{c}${src_last},MATCH($B$1,{label_range},0))")
 
-    ws.cell(sorted_header, 1, subprocess_name).font = bold
+    ws.cell(sorted_header, 1, indicator_name).font = bold
     for i, label in enumerate(labels):
         ws.cell(sorted_first + i, 1, label).font = bold
     ws.cell(share_row, 1, '="Share of "&$B$1&" (%)"').font = Font(bold=True, color="C00000")
@@ -377,15 +377,15 @@ def _write_sortable_sheet(ws, subprocess_name, table, n_sectors, sort_row):
     ws.freeze_panes = ws.cell(sorted_first, 2)
 
 
-def export_subprocess_tables_excel(scenario_folder_path, cf_df, bridge_m, output_path,
+def export_indicator_tables_excel(scenario_folder_path, cf_df, bridge_m, output_path,
                                    sort_row=TOTAL_FOOTPRINT_ROW):
-    """Write an Excel workbook with 1 sheet per sub-process (see
-    build_subprocess_tables for the content, _write_sortable_sheet for the layout).
+    """Write an Excel workbook with 1 sheet per indicator (see
+    build_indicator_tables for the content, _write_sortable_sheet for the layout).
 
     The sectors, then the categories, are sorted in decreasing order of
     `sort_row` via formulas: changing cell B1 of a sheet in Excel (drop-down
     list) re-sorts this sheet. The sheet names are truncated to 31 characters
-    (Excel limit); the full name of the sub-process is recalled at the top of
+    (Excel limit); the full name of the indicator is recalled at the top of
     each table.
 
     Returns:
@@ -393,18 +393,18 @@ def export_subprocess_tables_excel(scenario_folder_path, cf_df, bridge_m, output
     """
     from openpyxl import Workbook
 
-    tables = build_subprocess_tables(scenario_folder_path, cf_df, bridge_m)
+    tables = build_indicator_tables(scenario_folder_path, cf_df, bridge_m)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     wb = Workbook()
     wb.remove(wb.active)
     used_names = set()
-    for subprocess_name, table in tables.items():
+    for indicator_name, table in tables.items():
         if sort_row not in table.index:
             raise ValueError(f"Unknown sort_row: {sort_row!r} (expected: {list(table.index)})")
-        ws = wb.create_sheet(_excel_sheet_name(subprocess_name, used_names))
-        _write_sortable_sheet(ws, subprocess_name, table, table.shape[1] - len(bridge_m.columns), sort_row)
+        ws = wb.create_sheet(_excel_sheet_name(indicator_name, used_names))
+        _write_sortable_sheet(ws, indicator_name, table, table.shape[1] - len(bridge_m.columns), sort_row)
     wb.calculation.fullCalcOnLoad = True
     wb.save(output_path)
     return output_path
@@ -418,8 +418,8 @@ def _index_of_any(values, labels, start=0):
     raise ValueError(f"None of {labels} found")
 
 
-def load_subprocess_tables_excel(excel_path):
-    """Read back a workbook written by export_subprocess_tables_excel.
+def load_indicator_tables_excel(excel_path):
+    """Read back a workbook written by export_indicator_tables_excel.
 
     Reads the "source data" block (values, no formulas) and the sort row chosen
     in B1 of each sheet -- possibly edited by hand in Excel. Does not depend on
@@ -432,7 +432,7 @@ def load_subprocess_tables_excel(excel_path):
     selection by name on a common table would mix them up.
 
     Returns:
-        {subprocess_name: {"sector_table": DataFrame (rows = data, columns =
+        {indicator_name: {"sector_table": DataFrame (rows = data, columns =
             sectors, bridge order), "category_table": DataFrame (columns =
             categories), "sort_row": str, "sectors": [...], "categories": [...]}}
     """
@@ -455,7 +455,7 @@ def load_subprocess_tables_excel(excel_path):
         rank_idx = _index_of_any(first_col, rank_labels, key_idx)
 
         header = rows[header_idx]
-        subprocess_name = header[0]
+        indicator_name = header[0]
         n_cols = max(j for j, v in enumerate(header) if v is not None)
         columns = [str(v) for v in header[1:n_cols + 1]]
         # The sectors are the ranked columns ("Rank" row filled in), the
@@ -468,7 +468,7 @@ def load_subprocess_tables_excel(excel_path):
         sort_row = rows[0][1]
         if sort_row not in labels:
             raise ValueError(f"[{ws.title}] unknown sort row in B1: {sort_row!r} (expected: {labels})")
-        sheets[subprocess_name] = {
+        sheets[indicator_name] = {
             "sector_table": pd.DataFrame(values[:, :n_sectors], index=labels, columns=columns[:n_sectors]),
             "category_table": pd.DataFrame(values[:, n_sectors:], index=labels, columns=columns[n_sectors:]),
             "sort_row": sort_row,
@@ -485,7 +485,7 @@ BUBBLE_ROWS = ["M_imp", "M_dom", "M_row", "Y_imp", "Y_dom"]
 
 
 def select_bubble_items(sheet, type="categories", n=10):
-    """Columns to plot for a sheet read back by load_subprocess_tables_excel.
+    """Columns to plot for a sheet read back by load_indicator_tables_excel.
 
     type="categories": all the consumption categories;
     type="products"  : the first n sectors.
@@ -545,7 +545,7 @@ def _compute_axis_limits(series_list, default_max=1.0):
 
 
 # ============================================================================
-# FIGURES (from the Excel workbooks of export_subprocess_tables_excel)
+# FIGURES (from the Excel workbooks of export_indicator_tables_excel)
 # ============================================================================
 
 PRODUCT_LABEL_MAX_CHARS = 30
@@ -558,8 +558,8 @@ def _short_label(label, max_chars=PRODUCT_LABEL_MAX_CHARS):
 
 
 def _scenario_label(excel_path):
-    """Scenario name deduced from the file name (bubble_data_by_subprocess_<scenario>.xlsx)."""
-    return Path(excel_path).stem.replace("bubble_data_by_subprocess_", "")
+    """Scenario name deduced from the file name (bubble_data_by_indicator_<scenario>.xlsx)."""
+    return Path(excel_path).stem.replace("bubble_data_by_indicator_", "")
 
 
 def _series_values(payload, components):
@@ -569,7 +569,7 @@ def _series_values(payload, components):
 
 def _shares(sheet, items, type):
     """Share (%) of each displayed item in the total footprint of the
-    sub-process (TOTAL_FOOTPRINT_ROW, total = sum over all the sectors of the sheet)."""
+    indicator (TOTAL_FOOTPRINT_ROW, total = sum over all the sectors of the sheet)."""
     total = float(sheet["sector_table"].loc[TOTAL_FOOTPRINT_ROW].sum())
     if total == 0:
         return np.zeros(len(items))
@@ -614,24 +614,24 @@ def _style_x_axis(ax, x_pos, items, type):
     ax.set_xlim(-0.6, len(items) - 0.4)
 
 
-def _subplot_title(subprocess_name, sheet):
-    return f"{subprocess_name}\n(sorted by: {sheet['sort_row']})"
+def _subplot_title(indicator_name, sheet):
+    return f"{indicator_name}\n(sorted by: {sheet['sort_row']})"
 
 
 def _figure_subject(type, n):
-    return "consumption categories" if type == "categories" else f"top {n} sectors per sub-process"
+    return "consumption categories" if type == "categories" else f"top {n} sectors per indicator"
 
 
 def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
                       comparison_excel_path=None, base_label=None, s1_label=None):
-    """Bubble chart from the Excel workbooks of export_subprocess_tables_excel:
-    1 subplot per sub-process, 2 bubbles per item of the X axis (see
+    """Bubble chart from the Excel workbooks of export_indicator_tables_excel:
+    1 subplot per indicator, 2 bubbles per item of the X axis (see
     BUBBLE_SERIES): M_dom+M_imp (size Y_dom) and M_row (size Y_imp).
 
     Args:
         base_excel_path: workbook of the reference scenario (baseline).
         type: "categories" -> all the consumption categories;
-            "products" -> the first `n` sectors of each sub-process.
+            "products" -> the first `n` sectors of each indicator.
             In both cases, in decreasing order of the sort row chosen in B1 of
             its sheet (editable by hand in Excel, see select_bubble_items).
         n: number of sectors displayed if type="products" (ignored otherwise).
@@ -644,7 +644,7 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
     Returns:
         (fig, axes)
     """
-    base_sheets = load_subprocess_tables_excel(base_excel_path)
+    base_sheets = load_indicator_tables_excel(base_excel_path)
     base_label = base_label or _scenario_label(base_excel_path)
     base_payloads = {sp: select_bubble_items(sheet, type, n) for sp, sheet in base_sheets.items()}
     base_shares = {sp: _shares(base_sheets[sp], list(p.columns), type) for sp, p in base_payloads.items()}
@@ -655,7 +655,7 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
 
     if comparison_excel_path is None:
         raise ValueError("scenarios=True requires comparison_excel_path")
-    s1_sheets = load_subprocess_tables_excel(comparison_excel_path)
+    s1_sheets = load_indicator_tables_excel(comparison_excel_path)
     s1_label = s1_label or _scenario_label(comparison_excel_path)
     s1_payloads, s1_shares = {}, {}
     for sp, base_payload in base_payloads.items():
@@ -664,7 +664,7 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
             table_key = "category_table" if type == "categories" else "sector_table"
             s1_payloads[sp] = s1_sheets[sp][table_key].reindex(index=BUBBLE_ROWS, columns=items).fillna(0.0)
             s1_shares[sp] = _shares(s1_sheets[sp], items, type)
-        else:  # sub-process missing from the compared scenario: bubbles and bars drawn at 0
+        else:  # indicator missing from the compared scenario: bubbles and bars drawn at 0
             s1_payloads[sp] = pd.DataFrame(0.0, index=BUBBLE_ROWS, columns=items)
             s1_shares[sp] = np.zeros(len(items))
     return _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles, type, n,
@@ -672,19 +672,19 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
 
 
 def _plot_single(payloads, shares, titles, type, n, label):
-    """1 subplot per sub-process, 1 scenario: share (%) bars in the total on
+    """1 subplot per indicator, 1 scenario: share (%) bars in the total on
     the left axis, bubbles on the right axis. Bubble scale common to all the
     subplots (max of Y_dom, resp. Y_imp, over the displayed items)."""
-    subprocesses = list(payloads)
-    if not subprocesses:
+    indicators = list(payloads)
+    if not indicators:
         print("No data to plot.")
         return None, None
 
     n_items = max(p.shape[1] for p in payloads.values())
-    fig, axes = _make_grid(len(subprocesses), n_items, type, base_width=6.2, base_height=4.8)
+    fig, axes = _make_grid(len(indicators), n_items, type, base_width=6.2, base_height=4.8)
     refs = {row: _ref_max(payloads, row) for row in ("Y_dom", "Y_imp")}
 
-    for i, sp in enumerate(subprocesses):
+    for i, sp in enumerate(indicators):
         ax_bar = axes[i]
         ax = ax_bar.twinx()
         payload = payloads[sp]
@@ -705,7 +705,7 @@ def _plot_single(payloads, shares, titles, type, n, label):
         _style_x_axis(ax_bar, x_pos, list(payload.columns), type)
         ax.grid(axis="y", alpha=0.25, linestyle="--")
 
-    for i in range(len(subprocesses), len(axes)):
+    for i in range(len(indicators), len(axes)):
         axes[i].set_visible(False)
 
     legend_handles = [
@@ -727,13 +727,13 @@ def _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles,
     on the left axis; bubbles on two independent right axes (base_label against
     the frame, s1_label shifted outwards), shifted horizontally. Bubble scale
     specific to each scenario, common to all the subplots."""
-    subprocesses = list(base_payloads)
-    if not subprocesses:
+    indicators = list(base_payloads)
+    if not indicators:
         print("No data to plot.")
         return None, None
 
     n_items = max(p.shape[1] for p in base_payloads.values())
-    fig, axes = _make_grid(len(subprocesses), n_items, type, base_width=7.4, base_height=5.1)
+    fig, axes = _make_grid(len(indicators), n_items, type, base_width=7.4, base_height=5.1)
     offset = 0.14
 
     base_colors = BUBBLE_COLORS
@@ -747,7 +747,7 @@ def _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles,
 
     base_bar_color, s1_bar_color = left_color, right_color
 
-    for i, sp in enumerate(subprocesses):
+    for i, sp in enumerate(indicators):
         ax_bar = axes[i]
         ax_base = ax_bar.twinx()
         ax_s1 = ax_bar.twinx()
@@ -787,7 +787,7 @@ def _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles,
             ax.spines["top"].set_visible(False)
             ax.spines["left"].set_visible(False)
 
-    for i in range(len(subprocesses), len(axes)):
+    for i in range(len(indicators), len(axes)):
         axes[i].set_visible(False)
 
     legend_handles = [
