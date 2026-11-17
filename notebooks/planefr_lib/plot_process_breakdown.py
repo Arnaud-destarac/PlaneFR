@@ -1,22 +1,21 @@
 """
-Barre empilée à 100 % représentant la contribution de chaque processus du
-système Terre (LP, colonne "Processus du système Terre" de facteurs de
-caractérisation.xlsx) à l'empreinte d'un sous-processus donné (ex.
-"Biodiversity loss"), une barre par scénario.
+100 % stacked bar showing the contribution of each Earth-system process (LP,
+"EXIOBASE groups" column of characterization_factors.xlsx) to the footprint of
+a given sub-process (e.g. "Biodiversity loss"), one bar per scenario.
 
-Contrairement à plot_stacked_bar (empilement par catégorie de consommation,
-un sous-processus par barre), cette figure empile par LP d'origine, pour un
-seul sous-processus, avec une barre par scénario.
+Unlike plot_stacked_bar (stacked by consumption category, one sub-process per
+bar), this figure stacks by LP of origin, for a single sub-process, with one
+bar per scenario.
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-# Regroupement des LP bruts en catégories d'affichage : ghg_combustion et
-# ghg_emissions sont deux extractions distinctes du même phénomène physique
-# (émissions de GES par combustion vs. autres émissions) et sont donc
-# fusionnées sous un seul segment "Climate Change".
+# Grouping of the raw LPs into display categories: ghg_combustion and
+# ghg_emissions are two separate extractions of the same physical phenomenon
+# (GHG emissions from combustion vs. other emissions) and are therefore
+# merged into a single "Climate Change" segment.
 PROCESS_GROUP_MAP = {
     "ghg_combustion": "climate_change",
     "ghg_emissions": "climate_change",
@@ -34,9 +33,9 @@ PROCESS_GROUP_LABELS = {
     "air_emissions": "Other air emissions",
 }
 
-# Ordre d'empilement (bas -> haut). Un LP absent de PROCESS_GROUP_MAP (ex.
-# raw_materials, sans rapport avec Biodiversity loss) est regroupé sous
-# "air_emissions"/"Other", en fin de pile -- voir group_lp_values.
+# Stacking order (bottom -> top). An LP missing from PROCESS_GROUP_MAP (e.g.
+# raw_materials, unrelated to Biodiversity loss) is grouped under
+# "air_emissions"/"Other", at the top of the stack -- see group_lp_values.
 PROCESS_GROUP_ORDER = ["climate_change", "land", "water", "nutrients", "air_emissions"]
 
 PROCESS_GROUP_COLORS = {
@@ -49,8 +48,8 @@ PROCESS_GROUP_COLORS = {
 
 
 def group_lp_values(lp_values):
-    """Regroupe {lp_brut: valeur} en {groupe: valeur} via PROCESS_GROUP_MAP
-    (LP inconnu -> "air_emissions"/"Other", fourre-tout)."""
+    """Group {raw_lp: value} into {group: value} via PROCESS_GROUP_MAP
+    (unknown LP -> "air_emissions"/"Other", catch-all)."""
     grouped = {}
     for lp_name, value in lp_values.items():
         group = PROCESS_GROUP_MAP.get(lp_name, "air_emissions")
@@ -60,18 +59,18 @@ def group_lp_values(lp_values):
 
 def create_subprocess_contribution_chart(lp_values_by_scenario, scenario_names,
                                           subprocess_name="", ax=None, show_legend=True):
-    """Barre empilée en % (une par scénario) de la contribution de chaque
-    groupe de processus (PROCESS_GROUP_ORDER) à l'empreinte de subprocess_name.
+    """Stacked bar in % (one per scenario) of the contribution of each process
+    group (PROCESS_GROUP_ORDER) to the footprint of subprocess_name.
 
     Args:
-        lp_values_by_scenario: liste de {lp_brut: valeur_absolue}, une entrée
-            par scénario (voir processing.process_subprocess_lp_breakdown).
-        scenario_names: noms de scénario correspondants (même ordre/longueur).
-        subprocess_name: utilisé seulement pour le titre de la figure.
-        ax: axe matplotlib existant ; si None, une nouvelle figure est créée.
+        lp_values_by_scenario: list of {raw_lp: absolute_value}, one entry per
+            scenario (see processing.process_subprocess_lp_breakdown).
+        scenario_names: matching scenario names (same order/length).
+        subprocess_name: only used for the figure title.
+        ax: existing matplotlib axis; if None, a new figure is created.
 
     Returns:
-        (fig, ax) si ax=None a été fourni en entrée, sinon (None, ax).
+        (fig, ax) if ax=None was given as input, otherwise (None, ax).
     """
     grouped_by_scenario = [group_lp_values(lp_values) for lp_values in lp_values_by_scenario]
     n_scenarios = len(scenario_names)

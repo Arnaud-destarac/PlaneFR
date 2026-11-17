@@ -1,6 +1,6 @@
 """
-Helpers de couleur : catégories de consommation (barres empilées, bubble charts)
-et style par scénario (figures overshoot).
+Color helpers: consumption categories (stacked bars, bubble charts) and
+per-scenario style (overshoot figures).
 """
 
 import re
@@ -9,9 +9,9 @@ from . import config
 
 
 def sort_categories(categories):
-    """Trie une liste de catégories selon config.CATEGORY_ORDER.
+    """Sort a list of categories according to config.CATEGORY_ORDER.
 
-    Les catégories inconnues sont conservées à la fin, dans leur ordre d'origine.
+    Unknown categories are kept at the end, in their original order.
     """
     known = [c for c in config.CATEGORY_ORDER if c in categories]
     unknown = [c for c in categories if c not in config.CATEGORY_ORDER]
@@ -19,7 +19,7 @@ def sort_categories(categories):
 
 
 def get_category_color(category, fallback_idx=0):
-    """Couleur par nom de catégorie (stable, indépendante de la position après agrégation)."""
+    """Color by category name (stable, independent of the position after aggregation)."""
     if category in config.CATEGORY_COLOR_MAP:
         return config.CATEGORY_COLOR_MAP[category]
     fallback_colors = list(config.CATEGORY_COLORS.values())
@@ -27,7 +27,7 @@ def get_category_color(category, fallback_idx=0):
 
 
 def get_dark_shade(hex_color, factor=0.7):
-    """Retourne une nuance foncée d'une couleur hex."""
+    """Return a darker shade of a hex color."""
     h = hex_color.lstrip("#")
     rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
     dark_rgb = tuple(int(c * factor) for c in rgb)
@@ -35,7 +35,7 @@ def get_dark_shade(hex_color, factor=0.7):
 
 
 def get_light_shade(hex_color, factor=1.3):
-    """Retourne une nuance claire d'une couleur hex."""
+    """Return a lighter shade of a hex color."""
     h = hex_color.lstrip("#")
     rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
     light_rgb = tuple(min(255, int(c * factor)) for c in rgb)
@@ -43,32 +43,30 @@ def get_light_shade(hex_color, factor=1.3):
 
 
 def scenario_style_map(scenario_names):
-    """Associe à chaque nom de dossier de scénario une couleur de bulle {face, edge}.
+    """Map each scenario folder name to a bubble color {face, edge}.
 
-    Reconnaît, dans l'ordre :
-      - code région "W" (Monde)   -> vert
-      - code région "EU27"        -> rouge
-    puis (motifs cherchés dans le nom en minuscules) :
-      - "2015"           -> blanc (base-year)
-      - "2019"           -> bleu clair
-      - "trend"          -> gris très foncé (tendanciel 2050)
-      - "suff"/"s2"/"s3"/"tech" -> dégradé de bleus (scénarios de transition 2050)
-      - sinon            -> gris-bleu générique (fallback)
+    Recognizes, in this order:
+      - region code "W" (World)   -> green
+      - region code "EU27"        -> red
+    then (patterns searched in the lower-case name):
+      - "2015"           -> white (base year)
+      - "2019"           -> light blue
+      - "trend"          -> very dark grey (2050 trend scenario)
+      - "suff"/"s2"/"s3"/"tech" -> shades of blue (2050 transition scenarios)
+      - otherwise        -> generic grey-blue (fallback)
 
-    Les deux codes région sont cherchés sur des morceaux entiers du nom (découpé
-    sur tout ce qui n'est pas alphanumérique) et non par inclusion de texte, pour
-    que "W" ne corresponde qu'à "2019_W" et pas à n'importe quel nom contenant
-    un w. Ils remplacent les motifs "world"/"europe" de la version précédente,
-    devenus caducs avec le renommage des dossiers (2019_World -> 2019_W,
-    2019_Europe_27 -> 2019_EU27) — même convention de codes que
-    processing.resolve_region_code.
+    The two region codes are matched against whole tokens of the name (split
+    on every non-alphanumeric character) rather than by substring, so that "W"
+    only matches "2019_W" and not any name containing a w. They replace the
+    "world"/"europe" patterns of the previous version, which became obsolete
+    when the folders were renamed (2019_World -> 2019_W, 2019_Europe_27 ->
+    2019_EU27) -- same code convention as processing.resolve_region_code.
 
-    Cette liste couvre les noms de dossiers actuels (Base_year, Sufficiency_NZE,
-    Tech_NZE, TREND, 2019_FR/W/EU27) — c'est la version qui doit rester la
-    référence si de nouveaux motifs de noms de scénarios apparaissent (voir
-    notebooks/README ou le plan de refactor pour le détail : l'ancien mapping
-    "s1".."s4"/"tend" utilisé dans une version antérieure du code ne
-    correspondait déjà plus aux noms de scénarios actuels).
+    This list covers the current folder names (Base_year, Sufficiency_NZE,
+    Tech_NZE, TREND, 2019_FR/W/EU27) -- it is the version that should remain
+    the reference if new scenario name patterns appear (the old
+    "s1".."s4"/"tend" mapping used in an earlier version of the code already
+    no longer matched the current scenario names).
     """
     styles = {}
     blue_scale = {"suff": "#dbdbdb", "s2": "#9ec9f8", "s3": "#4f90d8", "tech": "#6f6f6f"}
@@ -99,9 +97,9 @@ def scenario_style_map(scenario_names):
     return styles
 
 
-# Couleurs par code région EXIOBASE (figure par région,
-# plot_overshoot.create_overshoot_safe_space_figure_by_region) : "FR" reprend la
-# couleur "2019" de scenario_style_map, "EU27"/"W" leurs couleurs dédiées ci-dessus.
+# Colors by EXIOBASE region code (by-region figure,
+# plot_overshoot.create_overshoot_safe_space_figure_by_region): "FR" reuses the
+# "2019" color of scenario_style_map, "EU27"/"W" their dedicated colors above.
 REGION_CODE_COLORS = {
     "W": {"face": "#1f791f", "edge": "#1f791f"},
     "EU27": {"face": "#c90808", "edge": "#c90808"},
@@ -111,18 +109,18 @@ REGION_CODE_FALLBACK = {"face": "#b7c4d3", "edge": "#44505c"}
 
 
 def region_code_style_map(scenario_codes):
-    """Associe à chaque nom de scénario une couleur de bulle {face, edge}, à
-    partir de son code région EXIOBASE -- et non de son nom, contrairement à
-    scenario_style_map : deux scénarios différents rattachés au même code (ex.
-    Base_year et TREND, tous deux "FR" par défaut, cf.
-    processing.resolve_region_code) reçoivent donc la même couleur.
+    """Map each scenario name to a bubble color {face, edge}, based on its
+    EXIOBASE region code -- not on its name, unlike scenario_style_map: two
+    different scenarios attached to the same code (e.g. Base_year and TREND,
+    both "FR" by default, see processing.resolve_region_code) therefore get
+    the same color.
 
-    "FR" -> bleu clair, "EU27" -> rouge, "W" -> vert (REGION_CODE_COLORS) ; tout
-    autre code -> gris générique (REGION_CODE_FALLBACK).
+    "FR" -> light blue, "EU27" -> red, "W" -> green (REGION_CODE_COLORS); any
+    other code -> generic grey (REGION_CODE_FALLBACK).
 
     Args:
-        scenario_codes: {nom_scénario: code EXIOBASE}, tel que retourné par
-            processing.resolve_region_code pour chaque scénario.
+        scenario_codes: {scenario_name: EXIOBASE code}, as returned by
+            processing.resolve_region_code for each scenario.
     """
     return {
         name: REGION_CODE_COLORS.get(str(code).upper(), REGION_CODE_FALLBACK)

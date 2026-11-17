@@ -1,15 +1,14 @@
 """
-Contribution des différents processus du système Terre (LP, facteurs de
-caractérisation.xlsx) à l'empreinte du sous-processus "Biodiversity loss",
-en % de l'empreinte totale -- une barre empilée à 100 % par scénario France
-(scénario de base + scénarios de transition 2050, cf. config.get_scenario_folders).
+Contribution of the different Earth-system processes (LP, "EXIOBASE groups"
+column of characterization_factors.xlsx) to the footprint of the
+"Biodiversity loss" sub-process, in % of the total footprint -- one 100 %
+stacked bar per France scenario (base scenario + 2050 transition scenarios,
+see config.get_scenario_folders).
 
-ghg_combustion et ghg_emissions sont regroupés sous "Climate Change" ; les
-autres LP sont renommés pour l'affichage : land -> "Land occupation",
-water -> "Water Availability", nutrients -> "Eutrophication",
-air_emissions -> "Other" (voir planefr_lib.plot_process_breakdown).
+ghg_combustion and ghg_emissions are grouped under "GHG emissions"; the other
+LPs are renamed for display (see planefr_lib.plot_process_breakdown).
 
-Génère figures/biodiversity_loss_process_contribution.png.
+Generates figures/biodiversity_loss_process_contribution.png.
 """
 
 import sys
@@ -30,17 +29,17 @@ SUBPROCESS_NAME = "Biodiversity loss - PDF"
 
 
 def main():
-    facteurs_carac_df = io.load_facteurs_carac(config.SCENARIO_GROUP)
-    seuils_df = io.load_seuils(config.SCENARIO_GROUP)
+    cf_df = io.load_characterization_factors(config.SCENARIO_GROUP)
+    thresholds_df = io.load_thresholds(config.SCENARIO_GROUP)
 
     scenario_folders = config.get_scenario_folders(exclude_2019=True)
     scenario_names = [f.name for f in scenario_folders]
-    print(f"Scénarios trouvés ({len(scenario_folders)}): {scenario_names}")
+    print(f"Scenarios found ({len(scenario_folders)}): {scenario_names}")
 
     lp_values_by_scenario = []
     for scenario_folder in scenario_folders:
         lp_values = processing.process_subprocess_lp_breakdown(
-            SUBPROCESS_NAME, scenario_folder, facteurs_carac_df, seuils_df,
+            SUBPROCESS_NAME, scenario_folder, cf_df, thresholds_df,
         )
         lp_values_by_scenario.append(lp_values)
         print(f"  {scenario_folder.name}: {lp_values}")
@@ -53,7 +52,7 @@ def main():
     output_path = config.FIGURES_DIR / "biodiversity_loss_process_contribution.png"
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"Sauvegardé : {output_path.name}")
+    print(f"Saved: {output_path.name}")
 
 
 if __name__ == "__main__":

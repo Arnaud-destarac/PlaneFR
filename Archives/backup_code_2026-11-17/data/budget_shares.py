@@ -63,6 +63,9 @@ Remarques d'implémentation
   - Repli régional : les économies sans projection SSP propre suivent la dynamique
     SSP agrégée de leur région EXIOBASE, calculée sur les économies de la région
     dotées d'une projection propre.
+  - Périmètre : les économies individuelles sont isolées des agrégats du WDI par
+    appartenance à la norme ISO 3166-1, et non par une liste d'agrégats figée ; le
+    résultat est contrôlé par bouclage démographique sur l'agrégat « World ».
   - Économies exclues : celles sans PIB Banque mondiale sur 1990-2025 sont écartées
     de tous les calculs, EPC compris — EPC et CTR portent sur le même ensemble.
   - Les économies à couverture partielle voient GDPcap_s calculé sur les seules
@@ -72,6 +75,9 @@ Remarques d'implémentation
 Usage
 -----
     python3 budget_shares_regions.py [--outdir DIR] [--check CLASSEUR.xlsx]
+
+Le script est autonome : les quatre extractions sources suffisent à reproduire
+l'intégralité des résultats, sans fichier intermédiaire.
 
 Dépendances : openpyxl, country_converter (pip install openpyxl country_converter)
 """
@@ -100,9 +106,19 @@ SRC = {
     "pop_bm": DATA / "Budget share" / "Population BM.csv",
     "gdp_ssp": DATA / "Budget share" / "GDP PPP SSPs.csv",
     "pop_ssp": DATA / "Budget share" / "Population SSPs.csv",
-    # Fournit la liste des 217 économies retenues (agrégats Banque mondiale écartés)
-    "perimetre": DATA / "Budget_Shares.xlsx",
+    "pop_un": DATA / "Budget share" / "Population ONU.xlsx"
 }
+
+
+# Économies des extractions WDI dont le code n'appartient pas à la norme ISO 3166-1
+# et que le filtre du périmètre (cf. derive_perimeter) retiendrait donc à tort pour
+# des agrégats. CHI regroupe Guernesey et Jersey, économies non distinguées par le WDI.
+NON_ISO_ECONOMIES = {"CHI"}
+
+# Tolérance du contrôle de bouclage démographique : écart admis entre la somme des
+# populations retenues et l'agrégat « World » du WDI (économies à population non
+# renseignée, arrondis). Un agrégat régional conservé par erreur ferait exploser cet écart.
+PERIMETER_TOLERANCE = 0.02
 
 SSPS = ["SSP1", "SSP2", "SSP3", "SSP4", "SSP5"]
 NODES = list(range(2020, 2101, 5))          # jalons SSP : 2020 (Historical Reference), puis scénario
@@ -110,6 +126,8 @@ HIST_FIRST, HIST_LAST = 1990, 2025          # couverture Banque mondiale
 LAST_YEAR = 2100
 
 PP = [("2019", 2019, 2019), ("2019-2050", 2019, 2050), ("2019-2100", 2019, 2100)]
+# Périodes démographiques des parts EPC fondées sur la population ONU
+UN_PP = [("2019", 2019, 2019), ("2050", 2050, 2050), ("2019-2100", 2019, 2100)]
 GP = [("1990-2019", 1990, 2019), ("1990-2050", 1990, 2050), ("2019", 2019, 2019),
       ("2019-2050", 2019, 2050), ("2019-2100", 2019, 2100), ("1990-2100", 1990, 2100)]
 COMBOS = [(p, g) for p in range(len(PP)) for g in range(len(GP))]
@@ -144,18 +162,57 @@ REGION_LABELS = [
 # ──────────────────────────── Lecture des données ─────────────────────────────
 
 
-def read_wdi(path: Path) -> dict[str, dict[int, float]]:
-    """Série Banque mondiale au format WDI : {ISO3: {année: valeur}}."""
+def read_wdi(path: Path) -> tuple[dict[str, dict[int, float]], dict[str, str]]:
+    """Série Banque mondiale au format WDI.
+
+    Renvoie ({code: {année: valeur}}, {code: libellé}). Toutes les entités du fichier
+    sont lues, économies comme agrégats ; le tri est opéré par derive_perimeter.
+    """
     rows = list(csv.reader(path.open(encoding="utf-8-sig")))
     header = next(r for r in rows if r and r[0] == "Country Name")
     idx = {y: i for i, y in enumerate(header)}
-    out = {}
+    values, labels = {}, {}
     for r in rows:
         if len(r) <= idx["2025"] or r[1] == "Country Code":
             continue
-        out[r[1]] = {y: float(r[idx[str(y)]])
-                     for y in range(HIST_FIRST, HIST_LAST + 1) if r[idx[str(y)]].strip()}
-    return out
+        values[r[1]] = {y: float(r[idx[str(y)]])
+                        for y in range(HIST_FIRST, HIST_LAST + 1) if r[idx[str(y)]].strip()}
+        labels[r[1]] = r[0]
+    return values, labels
+
+
+def derive_perimeter(labels: dict[str, str], pop_bm: dict[str, dict[int, float]],
+                     verbose: bool = True) -> list[str]:
+    """Isole les économies individuelles des agrégats du WDI.
+
+    Les extractions WDI mêlent économies et agrégats (World, groupes de revenu,
+    régions, groupes de prêt). Ces derniers portent des codes à trois lettres qui
+    n'appartiennent pas à la norme ISO 3166-1 (WLD, HIC, EUU, SSF…), alors que les
+    économies en relèvent toutes, à l'exception documentée de NON_ISO_ECONOMIES.
+    Le tri repose donc sur l'appartenance à la table ISO 3166-1 fournie par
+    country_converter, et non sur une liste d'agrégats, qui deviendrait caduque à
+    chaque révision de la nomenclature.
+
+    Le résultat est contrôlé par bouclage démographique : la somme des populations
+    retenues doit approcher l'agrégat « World » du fichier. Un agrégat conservé par
+    erreur produirait un double compte détecté par ce test.
+    """
+    iso3 = set(coco.CountryConverter().data["ISO3"]) | NON_ISO_ECONOMIES
+    codes = sorted((c for c in labels if c in iso3), key=lambda c: labels[c])  # tri par libellé
+
+    world = pop_bm.get("WLD", {}).get(2019)
+    if world:
+        total = sum(pop_bm[c][2019] for c in codes if pop_bm.get(c, {}).get(2019))
+        gap = total / world - 1
+        if abs(gap) > PERIMETER_TOLERANCE:
+            sys.exit(f"Périmètre incohérent : Σ population 2019 des {len(codes)} économies "
+                     f"retenues s'écarte de {gap:+.1%} de l'agrégat « World ». "
+                     f"Vérifier la nomenclature de l'extraction WDI.")
+        if verbose:
+            print(f"Périmètre : {len(codes)} économies sur {len(labels)} entités WDI "
+                  f"({len(labels) - len(codes)} agrégats écartés) · "
+                  f"bouclage démographique 2019 : {gap:+.2%}")
+    return codes
 
 
 def read_ssp(path: Path, unit: str):
@@ -176,16 +233,24 @@ def read_ssp(path: Path, unit: str):
     return nodes, names
 
 
-def read_perimeter(path: Path) -> tuple[list[str], dict[str, str]]:
-    """Liste des économies retenues et leur libellé Banque mondiale."""
-    ws = load_workbook(path, read_only=True, data_only=True)["PIB_BM"]
-    codes, names = [], {}
-    for i, row in enumerate(ws.iter_rows(values_only=True)):
-        if i == 0 or not row[0]:
-            continue
-        codes.append(row[0])
-        names[row[0]] = row[1]
-    return codes, names
+def read_un(path: Path) -> dict[str, dict[int, float]]:
+    """Population ONU (World Population Prospects 2024), en milliers au 1er juillet.
+
+    Raccorde la feuille « Estimates » (1950-2023) et la variante médiane (2024-2100).
+    Renvoie {ISO3: {année: valeur}} pour les pays et territoires. La population de la
+    France est complétée de celle des DROM, comptés à part par l'ONU mais inclus dans
+    le périmètre Banque mondiale.
+    """
+    wb = load_workbook(path, read_only=True, data_only=True)
+    pop: dict[str, dict[int, float]] = {}
+    for sheet in ("Estimates", "Medium variant"):
+        for r in wb[sheet].iter_rows(min_row=18, values_only=True):
+            if r[8] == "Country/Area" and r[5] and isinstance(r[10], int) and r[12] not in (None, ""):
+                pop.setdefault(r[5], {})[r[10]] = float(r[12])
+    for d in DROM:
+        for y, v in pop.pop(d, {}).items():
+            pop["FRA"][y] = pop["FRA"].get(y, 0.0) + v
+    return pop
 
 
 def classify(codes: list[str]) -> tuple[dict[str, str], set[str]]:
@@ -289,12 +354,27 @@ def country_shares(gdp: dict, pop: dict, included: list[str]) -> tuple[dict, dic
     return epc, ctr
 
 
+def un_shares(pop_un: dict, included: list[str]) -> tuple[dict, list[float]]:
+    """Parts EPC par économie (périodes UN_PP) d'après la population ONU, indépendantes des SSP.
+
+    Renvoie (parts, population moyenne par économie et par période, en milliers).
+    """
+    missing = [c for c in included if c not in pop_un]
+    if missing:
+        sys.exit(f"Économies sans population ONU : {missing}")
+    mean = {c: [statistics.fmean(pop_un[c][y] for y in range(a, b + 1)) for _, a, b in UN_PP]
+            for c in included}
+    totals = [sum(mean[c][p] for c in included) for p in range(len(UN_PP))]
+    return {c: [mean[c][p] / totals[p] for p in range(len(UN_PP))] for c in included}, mean
+
+
 def compute_all(verbose: bool = True) -> dict:
     """Parts pays et régionales, pour les cinq SSP et toutes les variantes."""
-    gdp_bm, pop_bm = read_wdi(SRC["gdp_bm"]), read_wdi(SRC["pop_bm"])
+    gdp_bm, names = read_wdi(SRC["gdp_bm"])
+    pop_bm, _ = read_wdi(SRC["pop_bm"])
     gdp_nodes, gdp_names = read_ssp(SRC["gdp_ssp"], UNIT_GDP_SSP)
     pop_nodes, pop_names = read_ssp(SRC["pop_ssp"], UNIT_POP_SSP)
-    codes, names = read_perimeter(SRC["perimetre"])
+    codes = derive_perimeter(names, pop_bm, verbose)
     region, ue27 = classify(codes)
     gdp_entity = ssp_entities(codes, gdp_names)
     pop_entity = ssp_entities(codes, pop_names)
@@ -302,7 +382,7 @@ def compute_all(verbose: bool = True) -> dict:
     included = [c for c in codes if gdp_bm.get(c)]
     excluded = [c for c in codes if not gdp_bm.get(c)]
     if verbose:
-        print(f"{len(codes)} économies · {len(included)} incluses · {len(excluded)} exclues "
+        print(f"{len(included)} économies incluses · {len(excluded)} exclues "
               f"(aucun PIB Banque mondiale 1990-{HIST_LAST})")
 
     epc, ctr, diagnostics = {}, {}, {}
@@ -315,9 +395,16 @@ def compute_all(verbose: bool = True) -> dict:
             tot = sum(v[REF_COMBO] for v in ctr[k].values())
             print(f"  {k} : Σ CTR réf. = {tot:.12f}")
 
+    epc_un, pop_un_mean = un_shares(read_un(SRC["pop_un"]), included)
+
     # Agrégation régionale : somme des parts pays, variante par variante
     reg_epc = {k: {} for k in SSPS}
     reg_ctr = {k: {} for k in SSPS}
+    reg_un, reg_un_pop = {}, {}
+    for g in [g for g, _ in REGION_LABELS] + ["EU27"]:
+        members = [c for c in included if (c in ue27 if g == "EU27" else region[c] == g)]
+        reg_un[g] = [sum(epc_un[c][p] for c in members) for p in range(len(UN_PP))]
+        reg_un_pop[g] = [sum(pop_un_mean[c][p] for c in members) for p in range(len(UN_PP))]
     for k in SSPS:
         for g, _ in REGION_LABELS:
             members = [c for c in included if region[c] == g]
@@ -333,7 +420,7 @@ def compute_all(verbose: bool = True) -> dict:
 
     return {"codes": codes, "names": names, "region": region, "ue27": ue27,
             "included": included, "excluded": excluded, "counts": counts,
-            "epc": epc, "ctr": ctr, "reg_epc": reg_epc, "reg_ctr": reg_ctr,
+            "epc": epc, "ctr": ctr, "reg_un": reg_un, "reg_un_pop": reg_un_pop, "reg_epc": reg_epc, "reg_ctr": reg_ctr,
             "diagnostics": diagnostics}
 
 # ──────────────────────────────── Sortie xlsx ─────────────────────────────────
@@ -379,9 +466,9 @@ def write_workbook(res: dict, out: Path) -> Path:
     ws.row_dimensions[2].height = 52
 
     headers = ["Code EXIOBASE", "Région", "Nb pays inclus", "Nb pays exclus (sans PIB)",
-               f"Part EPC réf. ({REF_SSP}, {PP[REF_P][0]})",
-               f"Part CTR réf. ({REF_SSP}, Pop {PP[REF_P][0]} × PIB {GP[REF_G][0]})",
-               "Rapport CTR / EPC réf.", "EPC min", "EPC moyenne", "EPC max",
+               f"Part EPC ref. ({REF_SSP}, {PP[REF_P][0]})",
+               f"Part CTR ref. ({REF_SSP}, Pop {PP[REF_P][0]} × PIB {GP[REF_G][0]})",
+               "Rapport CTR / EPC ref.", "EPC min", "EPC moyenne", "EPC max",
                "CTR min", "CTR moyenne", "CTR max", "UE27"]
     for j, text in enumerate(headers, 1):
         _head(ws, 4, j, text)
@@ -427,6 +514,7 @@ def write_workbook(res: dict, out: Path) -> Path:
                 ws.cell(r, j).font = _font(bold=True)
 
     total_row = 5 + len(REGION_LABELS)
+    ws.cell(total_row, 1, "W").font = _font(bold=True)  # code Monde, lu par la figure par région
     ws.cell(total_row, 2, "Total 49 régions").font = _font(bold=True)
     for col in (3, 4):
         cell = ws.cell(total_row, col, f"=SUM({get_column_letter(col)}5:{get_column_letter(col)}{total_row - 1})")
@@ -457,13 +545,21 @@ def write_workbook(res: dict, out: Path) -> Path:
     wv["A1"] = "Parts régionales par variante et par scénario (somme des parts pays)"
     wv["A1"].font = Font(name="Arial", size=13, bold=True, color=DARK)
     wv["A2"] = ("Une colonne par couple (scénario, variante). Les variantes strictement historiques "
-                "(Pop 2019 × PIB 1990-2019 ou 2019) sont identiques d'un SSP à l'autre.")
+                "(Pop 2019 × PIB 1990-2019 ou 2019) sont identiques d'un SSP à l'autre. Les trois premières colonnes "
+                "(UN – EPC) reposent sur la population ONU (WPP 2024, variante médiane), indépendante des SSP.")
     wv["A2"].font = _font(italic=True, color="595959")
 
     _head(wv, 4, 1, "Code EXIOBASE")
     _head(wv, 4, 2, "Région")
     col = 3
     layout = []
+    for p, (plabel, _, _) in enumerate(UN_PP):
+        _head(wv, 4, col, f"UN – EPC {plabel}", MED)
+        layout.append((None, "un", p, col))
+        col += 1
+        _head(wv, 4, col, f"UN – Population {plabel} (milliers)", MED)
+        layout.append((None, "un_pop", p, col))
+        col += 1
     for k in SSPS:
         for p, (plabel, _, _) in enumerate(PP):
             _head(wv, 4, col, f"{k} – EPC {plabel}", MED)
@@ -480,11 +576,29 @@ def write_workbook(res: dict, out: Path) -> Path:
         wv.cell(r, 2, label).font = _font()
         n_in, _ = res["counts"][code]
         for k, kind, index, c in layout:
-            source = res["reg_epc"] if kind == "epc" else res["reg_ctr"]
-            cell = wv.cell(r, c, source[k][code][index] if n_in else "n.d.")
+            if kind == "un_pop":
+                cell = wv.cell(r, c, res["reg_un_pop"][code][index])
+                cell.font = _font()
+                cell.number_format = "#,##0"
+                continue
+            if kind == "un":
+                value = res["reg_un"][code][index]
+            else:
+                value = (res["reg_epc"] if kind == "epc" else res["reg_ctr"])[k][code][index]
+            cell = wv.cell(r, c, value if n_in else "n.d.")
             cell.font = _font()
             if n_in:
                 cell.number_format = PCT
+
+    # Ligne Monde (W) : somme des 49 régions (parts et populations)
+    wv.cell(total_row, 1, "W").font = _font(bold=True)
+    wv.cell(total_row, 2, "Total 49 régions").font = _font(bold=True)
+    for k, kind, index, c in layout:
+        L = get_column_letter(c)
+        cell = wv.cell(total_row, c, f"=SUM({L}5:{L}{total_row - 1})")
+        cell.number_format = "#,##0" if kind == "un_pop" else PCT
+        cell.font = _font(bold=True)
+        cell.fill = PatternFill("solid", fgColor=CTRL)
 
     wv.freeze_panes = "C5"
     wv.row_dimensions[4].height = 70
@@ -558,8 +672,8 @@ def check(res: dict, reference: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--outdir", type=Path, default=Path("."),
-                    help="répertoire de sortie (défaut : répertoire courant)")
+    ap.add_argument("--outdir", type=Path, default=Path(__file__).resolve().parent,
+                    help="répertoire de sortie (défaut : répertoire du script)")
     ap.add_argument("--check", type=Path, metavar="XLSX",
                     help="classeur de référence pour vérifier les parts régionales")
     args = ap.parse_args()
@@ -569,7 +683,7 @@ def main() -> None:
         sys.exit("Fichiers source introuvables :\n  " + "\n  ".join(missing))
 
     res = compute_all()
-    out = write_workbook(res, args.outdir / "Budget_shares_regions_EXIOBASE.xlsx")
+    out = write_workbook(res, args.outdir / "budget_shares.xlsx")
     print(f"Écrit : {out.resolve()}")
 
     if args.check:

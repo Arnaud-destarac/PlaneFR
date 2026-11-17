@@ -1,12 +1,12 @@
 """
-Chargement des données sources : fichiers Excel (facteurs de caractérisation,
-matrices bridge, seuils, population) et pickles MRIO par scénario (d_cba, F_x_dom,
-F_Y_tot, M).
+Loading of the source data: Excel files (characterization factors, bridge
+matrices, thresholds, budget shares, population) and MRIO pickles by scenario
+(d_cba, F_x_dom, F_Y_tot, M).
 
-Convention générale des loaders de pickles : retournent None si le fichier
-n'existe pas pour ce scénario/LP (plutôt que de lever une exception), car
-l'absence d'un fichier pour certaines combinaisons scénario x sous-processus
-est un cas normal (ex. ghg_combustion absent des scénarios World/Europe).
+General convention of the pickle loaders: they return None if the file does
+not exist for this scenario/LP (rather than raising an exception), because a
+missing file for some scenario x sub-process combinations is a normal case
+(e.g. ghg_combustion missing from the World/Europe scenarios).
 """
 
 import re
@@ -17,52 +17,74 @@ import pandas as pd
 from . import config
 
 # ============================================================================
-# FICHIERS EXCEL (communs à tous les scénarios)
+# EXCEL FILES (common to all scenarios)
 # ============================================================================
 
 
 AGRI_GROUP_SUFFIX = "_agri"
-AGRI_SHEET = "Synthèse agri"
 
 
 def is_agri_group(scenario_group):
-    """True si le groupe de scénarios est un groupe agricole ("{scenario}_agri")."""
+    """True if the scenario group is an agricultural group ("{scenario}_agri")."""
     return isinstance(scenario_group, str) and scenario_group.endswith(AGRI_GROUP_SUFFIX)
 
 
-def load_facteurs_carac(scenario_group=None):
-    """Facteurs de caractérisation : colonnes Sous-processus, Processus du système
-    Terre (LP), Extensions exiobase, Facteurs de caractérisation.
+def _normalize_label(label):
+    """Collapse repeated whitespace and strip the ends of a row/column label
+    (non-string labels are returned unchanged)."""
+    return re.sub(r"\s+", " ", label).strip() if isinstance(label, str) else label
 
-    Si scenario_group se termine par "_agri", lit la feuille "Synthèse agri" au lieu
-    de la première feuille."""
-    sheet = AGRI_SHEET if is_agri_group(scenario_group) else 0
-    return pd.read_excel(config.FACTEURS_CARAC_FILE, sheet_name=sheet)
+
+def load_characterization_factors(scenario_group=None):
+    """Characterization factors: one row per (sub-process, LP, EXIOBASE stressor),
+    with columns config.CF_SUBPROCESS_COL ("Indicators"), config.CF_LP_COL
+    ("EXIOBASE groups"), config.CF_STRESSOR_COL ("EXIOBASE stressors"),
+    config.CF_UNIT_COL and config.CF_FACTOR_COL ("Characterization factors").
+
+    Reads the config.CF_SHEET sheet ("All"), or config.CF_AGRI_SHEET ("Agri") if
+    scenario_group ends with "_agri". Column names are matched to the config
+    constants case-insensitively (the two sheets do not use the same
+    capitalization, e.g. "EXIOBASE Groups" / "EXIOBASE groups"), and rows
+    without a sub-process or stressor are dropped."""
+    sheet = config.CF_AGRI_SHEET if is_agri_group(scenario_group) else config.CF_SHEET
+    df = pd.read_excel(config.CHARACTERIZATION_FACTORS_FILE, sheet_name=sheet)
+    canonical = {name.casefold(): name for name in (
+        config.CF_SUBPROCESS_COL, config.CF_LP_COL, config.CF_STRESSOR_COL,
+        config.CF_UNIT_COL, config.CF_FACTOR_COL)}
+    df = df.rename(columns=lambda c: canonical.get(_normalize_label(str(c)).casefold(), c))
+    missing = [c for c in canonical.values() if c not in df.columns and c != config.CF_UNIT_COL]
+    if missing:
+        raise KeyError(f"Columns {missing} not found in sheet '{sheet}' of "
+                       f"{config.CHARACTERIZATION_FACTORS_FILE.name} (columns: {list(df.columns)})")
+    df = df.dropna(subset=[config.CF_SUBPROCESS_COL, config.CF_STRESSOR_COL])
+    for col in (config.CF_SUBPROCESS_COL, config.CF_LP_COL, config.CF_STRESSOR_COL):
+        df[col] = df[col].map(_normalize_label)
+    return df
 
 
 def load_bridge_matrices():
-    """Matrice bridge 'Final conso. cat.' : correspondance secteur -> catégorie de
-    consommation (Food/Housing/Mobility/Final goods/Final services), pour les
-    barres empilées et la figure overshoot en valeurs absolues."""
+    """'Final conso. cat.' bridge matrix: sector -> consumption category mapping
+    (Food/Housing/Mobility/Final goods/Final services), for the stacked bars and
+    the overshoot figure in absolute values."""
     return pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name="Final conso. cat.")
 
 
 def load_bridge_m_matrix(sheet_name="M"):
-    """Bridge produits -> catégories de consommation (200 produits x k catégories)
-    pour l'agrégation par catégorie des tableaux Excel / du bubble chart.
+    """Products -> consumption categories bridge (200 products x k categories)
+    for the aggregation by category of the Excel tables / of the bubble chart.
 
     Args:
-        sheet_name: "M" (5 catégories : Food, Housing, Mobility, Final goods,
-            Final services) ou "M_split" (ventilation plus fine, 12 catégories).
-            Toutes les colonnes après "sector" sont lues comme des catégories.
+        sheet_name: "M" (5 categories: Food, Housing, Mobility, Final goods,
+            Final services) or "M_split" (finer breakdown, 12 categories).
+            All the columns after "sector" are read as categories.
 
-    À ne pas confondre avec la feuille 'Alimentation' du même classeur, qui est
-    une ventilation fine des produits alimentaires (Riz, Bœuf, Porc...).
+    Not to be confused with the 'Alimentation' sheet of the same workbook,
+    which is a fine breakdown of food products (rice, beef, pork...).
 
-    La 1re ligne de données de la feuille est une 2e ligne d'en-tête
-    (category / sub_category / sector) : les 200 produits sont aux lignes 1 à 200."""
+    The 1st data row of the sheet is a 2nd header row (category /
+    sub_category / sector): the 200 products are on rows 1 to 200."""
     m_raw = pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name=sheet_name)
-    # Colonnes catégories : celles après "sector", hors colonnes vides sans en-tête.
+    # Category columns: those after "sector", excluding empty columns without header.
     category_cols = [c for c in m_raw.columns[3:] if not str(c).startswith("Unnamed")]
     bridge_m = m_raw.loc[m_raw.index[1:201], category_cols].copy()
     bridge_m.index = m_raw.iloc[1:201, 2].values
@@ -70,35 +92,50 @@ def load_bridge_m_matrix(sheet_name="M"):
     return (bridge_m > 0).astype(int)
 
 
-def load_seuils(scenario_group=None):
-    """Feuille 'Synthèse' de seuils.xlsx : seuils/limites planétaires par sous-processus.
-    Si scenario_group se termine par "_agri", lit la feuille "Synthèse agri" à la place.
+def load_thresholds(scenario_group=None):
+    """config.THRESHOLDS_SHEET sheet ("All") of thresholds.xlsx: planetary
+    thresholds/limits by sub-process (one column per sub-process, one row per
+    notion). If scenario_group ends with "_agri", reads config.THRESHOLDS_AGRI_SHEET
+    ("Agri") instead.
 
-    Les noms de ligne y sont normalisés (espaces superflus réduits à un seul,
-    début/fin retirés) : la feuille contient plusieurs libellés avec des doubles
-    espaces ou espaces de fin (ex. "Unit conversion Exiobase  (p.cap)"), qui
-    casseraient sinon les lookups par nom exact (cf. planefr_lib.config)."""
-    sheet = AGRI_SHEET if is_agri_group(scenario_group) else "Synthèse"
-    df = pd.read_excel(config.SEUILS_FILE, sheet_name=sheet, index_col=0)
-    df.index = df.index.map(lambda x: re.sub(r"\s+", " ", x).strip() if isinstance(x, str) else x)
+    Row names are normalized (repeated whitespace collapsed to a single space,
+    ends stripped): the sheet contains several labels with double spaces or
+    trailing spaces (e.g. "Unit conversion Exiobase  (p.cap)"), which would
+    otherwise break the lookups by exact name (see planefr_lib.config)."""
+    sheet = config.THRESHOLDS_AGRI_SHEET if is_agri_group(scenario_group) else config.THRESHOLDS_SHEET
+    df = pd.read_excel(config.THRESHOLDS_FILE, sheet_name=sheet, index_col=0)
+    df.index = df.index.map(_normalize_label)
+    df.columns = df.columns.map(_normalize_label)
     return df
 
 
 def load_dls():
-    """Feuille 'DLS' de seuils.xlsx : planchers sociaux (decent living standards)."""
-    return pd.read_excel(config.SEUILS_FILE, sheet_name="DLS", index_col=0)
+    """config.DLS_SHEET sheet of thresholds.xlsx: social floors (decent living standards)."""
+    return pd.read_excel(config.THRESHOLDS_FILE, sheet_name=config.DLS_SHEET, index_col=0)
 
 
 def load_population_df():
-    """Feuille 'Population' de seuils.xlsx : population en milliers d'habitants,
-    indexée par année, une colonne par géographie (France/Europe/Monde)."""
-    return pd.read_excel(config.SEUILS_FILE, sheet_name="Population", index_col=0)
+    """config.POPULATION_SHEET sheet of budget_shares.xlsx: UN population (WPP
+    2024) in thousands, indexed by EXIOBASE region code (FR, EU27, W...), one
+    column per period, renamed to the period itself ("2015", "2019", "2050",
+    "2019-2050", "2019-2100": mean over the period)."""
+    df = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=config.POPULATION_SHEET,
+                       header=config.BUDGET_SHARES_HEADER_ROW)
+    df = df[df[config.BUDGET_SHARE_CODE_COLUMN].notna() & df[config.BUDGET_SHARE_REGION_COLUMN].notna()]
+    df = df.set_index(config.BUDGET_SHARE_CODE_COLUMN)
+    df.index = df.index.map(lambda x: str(x).strip())
+    periods = {}
+    for col in df.columns:
+        match = re.search(config.POPULATION_COLUMN_PATTERN, str(col), flags=re.IGNORECASE)
+        if match:
+            periods[col] = match.group(1)
+    return df[list(periods)].rename(columns=periods).apply(pd.to_numeric, errors="coerce")
 
 
 def bdf_file(scenario_group=None):
-    """Fichier impacts_facteurs_agrégé_{scenario_group}*.xlsx produit par BdF.ps1
-    (ex. groupe "Base_year" -> impacts_facteurs_agrégé_Base_year_2019_FR.xlsx).
-    scenario_group None = config.SCENARIO_GROUP. Un seul fichier doit correspondre."""
+    """File impacts_facteurs_agrégé_{scenario_group}*.xlsx produced by BdF.ps1
+    (e.g. group "Base_year" -> impacts_facteurs_agrégé_Base_year_2019_FR.xlsx).
+    scenario_group None = config.SCENARIO_GROUP. Exactly one file must match."""
     if scenario_group is None:
         scenario_group = config.SCENARIO_GROUP
     base = config.BDF_FILE
@@ -107,28 +144,28 @@ def bdf_file(scenario_group=None):
         return exact
     matches = sorted(base.parent.glob(f"{base.stem}_{scenario_group}_*{base.suffix}"))
     if len(matches) != 1:
-        found = [p.name for p in matches] or "aucun"
+        found = [p.name for p in matches] or "none"
         raise FileNotFoundError(
-            f"Fichier BdF du groupe '{scenario_group}' introuvable ou ambigu dans {base.parent} "
-            f"(attendu : {base.stem}_{scenario_group}[_...]{base.suffix} ; trouvé : {found})")
+            f"BdF file of group '{scenario_group}' not found or ambiguous in {base.parent} "
+            f"(expected: {base.stem}_{scenario_group}[_...]{base.suffix}; found: {found})")
     return matches[0]
 
 
 def _is_base_year_scenario(scenario_name):
-    """Dossier de scénario "année de base" (2019_FR, Base_year_2015...)."""
+    """"Base year" scenario folder (2019_FR, Base_year_2015...)."""
     return "2019" in scenario_name or scenario_name.startswith("Base_year")
 
 
 def bdf_comparison_file(scenario_group=None):
-    """Fichier BdF du scénario de comparaison d'un groupe à 2 scénarios (ex. groupe
-    "S1+" = 2019_FR + S1_2050) : le scénario "année de base" du groupe, lu dans
-    impacts_facteurs_agrégé_{groupe}_{scénario}.xlsx s'il existe, sinon dans le
-    fichier du groupe config.DLS_BASE_YEAR_GROUP (impacts_facteurs_agrégé_Base_year*.xlsx).
-    Le fichier du groupe lui-même (bdf_file) porte l'autre scénario (ex. S1_2050).
+    """BdF file of the comparison scenario of a 2-scenario group (e.g. group
+    "S1+" = 2019_FR + S1_2050): the "base year" scenario of the group, read in
+    impacts_facteurs_agrégé_{group}_{scenario}.xlsx if it exists, otherwise in
+    the file of the config.DLS_BASE_YEAR_GROUP group (impacts_facteurs_agrégé_Base_year*.xlsx).
+    The file of the group itself (bdf_file) holds the other scenario (e.g. S1_2050).
 
     Returns:
-        Path, ou None si le groupe ne contient qu'un scénario (ou est lui-même
-        le groupe année de base).
+        Path, or None if the group contains only one scenario (or is itself
+        the base-year group).
     """
     if scenario_group is None:
         scenario_group = config.SCENARIO_GROUP
@@ -141,49 +178,50 @@ def bdf_comparison_file(scenario_group=None):
     base = [s for s in scenarios if _is_base_year_scenario(s)]
     if len(scenarios) != 2 or len(base) != 1:
         raise ValueError(
-            f"Comparaison BdF : le groupe '{scenario_group}' doit contenir exactement 2 scénarios "
-            f"dont 1 année de base (trouvé : {scenarios})")
+            f"BdF comparison: group '{scenario_group}' must contain exactly 2 scenarios "
+            f"including 1 base year (found: {scenarios})")
     stem, suffix = config.BDF_FILE.stem, config.BDF_FILE.suffix
     specific = config.BDF_FILE.with_name(f"{stem}_{scenario_group}_{base[0]}{suffix}")
     return specific if specific.is_file() else bdf_file(config.DLS_BASE_YEAR_GROUP)
 
 
 def load_bdf(sheet_name="décile", scenario_group=None, path=None):
-    """Feuille sheet_name de impacts_facteurs_agrégé_{scenario_group}*.xlsx
-    (voir bdf_file) : 1 ligne par catégorie de ménages (+ une ligne
-    config.BDF_TOTAL_ROW), indexée par la 1re colonne ; colonne
-    config.BDF_WEIGHT_COL (part de la population) puis 1 colonne par
-    sous-processus, nommée "<sous-processus> (<unité>)". path : fichier à lire
-    à la place de bdf_file(scenario_group) (ex. bdf_comparison_file)."""
+    """Sheet sheet_name of impacts_facteurs_agrégé_{scenario_group}*.xlsx (see
+    bdf_file): 1 row per household category (+ a config.BDF_TOTAL_ROW row),
+    indexed by the 1st column; column config.BDF_WEIGHT_COL (share of the
+    population) then 1 column per sub-process, named "<sub-process> (<unit>)".
+    The sheet names ("décile", "unité urbaine", "croisé") are those written by
+    the BdF pipeline (Github/ademe_eemrio). path: file to read instead of
+    bdf_file(scenario_group) (e.g. bdf_comparison_file)."""
     df = pd.read_excel(path or bdf_file(scenario_group), sheet_name=sheet_name, index_col=0)
     df.index = df.index.map(str)
     return df
 
 
 def load_budget_shares_df():
-    """Feuille 'Parts_regions_EXIOBASE' de budget_shares.xlsx : part du budget
-    mondial revenant à chaque région EXIOBASE (+ l'agrégat UE27), indexée par
-    code région ("Code EXIOBASE" : FR, EU27, W, CN...).
+    """config.BUDGET_SHARES_SHEET sheet of budget_shares.xlsx: share of the world
+    budget going to each EXIOBASE region (+ the EU27 aggregate), indexed by
+    region code (config.BUDGET_SHARE_CODE_COLUMN: FR, EU27, W, CN...).
 
-    Les lignes de titre/notes qui encadrent le tableau dans la feuille sont
-    écartées (en-têtes lus à config.BUDGET_SHARES_HEADER_ROW, puis on ne garde
-    que les lignes ayant à la fois un code et un nom de région — les notes de
-    bas de tableau occupent la colonne des codes mais pas celle des régions),
-    et les parts sont converties en numérique : la feuille note "n.d." les
-    parts non calculables (Taïwan, absent des données Banque mondiale) et laisse
-    vides les min/max qui n'ont pas de sens (ligne "W"), qui deviennent donc NaN."""
+    The title/note rows around the table are discarded (headers read at
+    config.BUDGET_SHARES_HEADER_ROW, then only the rows with both a code and a
+    region name are kept -- the notes below the table occupy the code column
+    but not the region one), and the shares are converted to numbers: the sheet
+    writes "n.a." for the shares that cannot be computed (Taiwan, missing from
+    the World Bank data) and leaves empty the min/max that make no sense ("W"
+    row), which therefore become NaN."""
     def read(sheet):
         d = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=sheet,
                           header=config.BUDGET_SHARES_HEADER_ROW)
-        d = d[d[config.BUDGET_SHARE_CODE_COLUMN].notna() & d["Région"].notna()]
+        d = d[d[config.BUDGET_SHARE_CODE_COLUMN].notna() & d[config.BUDGET_SHARE_REGION_COLUMN].notna()]
         d = d.set_index(config.BUDGET_SHARE_CODE_COLUMN)
         d.index = d.index.map(lambda x: str(x).strip())
         return d
 
     df = read(config.BUDGET_SHARES_SHEET)
 
-    # Colonnes « UN – EPC <période> » de la feuille détaillée. Cette feuille n'a
-    # pas de ligne Monde : la part de W y vaut 1 par construction.
+    # "UN – EPC <period>" columns of the detailed sheet. This sheet has a World
+    # row (sum of the regions): the share of W is set to exactly 1.
     xls = pd.ExcelFile(config.BUDGET_SHARES_FILE)
     if config.BUDGET_SHARES_VARIANTS_SHEET in xls.sheet_names:
         variants = read(config.BUDGET_SHARES_VARIANTS_SHEET)
@@ -193,7 +231,7 @@ def load_budget_shares_df():
         if config.WORLD_REGION_CODE in df.index:
             df.loc[config.WORLD_REGION_CODE, un_columns] = 1.0
 
-    share_columns = [c for c in df.columns if c != "Région"]
+    share_columns = [c for c in df.columns if c != config.BUDGET_SHARE_REGION_COLUMN]
     df[share_columns] = df[share_columns].apply(pd.to_numeric, errors="coerce")
     return df
 
@@ -204,14 +242,14 @@ def load_budget_shares_df():
 
 
 def exclude_y_category(df, excluded=("Exports",)):
-    """Retire les colonnes dont Y_category est dans `excluded` (par défaut les
-    exports, qui ne font pas partie de la demande finale française).
+    """Drop the columns whose Y_category is in `excluded` (by default the
+    exports, which are not part of the French final demand).
 
-    Ne s'applique qu'aux données déjà reformatées dans data/3.10.2 (label
-    "Exports"). Les scripts de reformatage (reformat_d_cba_monde_europe.py)
-    travaillent sur les données brutes amont, où le même type de colonne porte
-    le label "Exports: Total (fob)" — ce n'est pas un filtre incohérent, ce
-    sont deux étages différents du pipeline avec des libellés différents.
+    Only applies to the data already reformatted in data/3.x (label
+    "Exports"). The reformatting scripts (reformat_d_cba_monde_europe.py) work
+    on the raw upstream data, where the same type of column is labeled
+    "Exports: Total (fob)" -- this is not an inconsistent filter, these are two
+    different stages of the pipeline with different labels.
     """
     if "Y_category" not in df.columns.names:
         return df
@@ -220,20 +258,20 @@ def exclude_y_category(df, excluded=("Exports",)):
 
 
 # ============================================================================
-# D_CBA / F_X_DOM / F_Y_TOT — SCÉNARIOS FRANCE (avec séparation dom/imp)
+# D_CBA / F_X_DOM / F_Y_TOT -- FRANCE SCENARIOS (with dom/imp split)
 # ============================================================================
 
 
 def load_d_cba_k_france(scenario_folder_path, lp_name, origin="imp"):
-    """Charge {origin}_{lp}/d_cba_k.pkl (intensités par unité) pour un scénario France."""
+    """Load {origin}_{lp}/d_cba_k.pkl (intensities per unit) for a France scenario."""
     folder_name = f"{'imp' if origin == 'imp' else 'dom'}_{lp_name}"
     file_path = Path(scenario_folder_path) / "extensions" / folder_name / "d_cba_k.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 def load_d_cba_france(scenario_folder_path, lp_name, origin):
-    """Charge {origin}_{lp}/d_cba.pkl (totaux, pas intensités) pour un scénario
-    France, exports exclus."""
+    """Load {origin}_{lp}/d_cba.pkl (totals, not intensities) for a France
+    scenario, exports excluded."""
     file_path = Path(scenario_folder_path) / "extensions" / f"{origin}_{lp_name}" / "d_cba.pkl"
     if not file_path.exists():
         return None
@@ -241,58 +279,58 @@ def load_d_cba_france(scenario_folder_path, lp_name, origin):
 
 
 def load_f_x_dom_france(scenario_folder_path, lp_name):
-    """Charge dom_{lp}/F_x_dom.pkl (empreinte production, dom uniquement) pour un scénario France."""
+    """Load dom_{lp}/F_x_dom.pkl (production footprint, dom only) for a France scenario."""
     file_path = Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}" / "F_x_dom.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 def load_f_y_tot_france(scenario_folder_path, lp_name):
-    """Charge dom_{lp}/F_Y_tot.pkl (émissions directes de la demande finale) pour un
-    scénario France, si ce fichier existe pour ce LP (ex. présent pour water/land)."""
+    """Load dom_{lp}/F_Y_tot.pkl (direct emissions of the final demand) for a
+    France scenario, if this file exists for this LP (e.g. present for water/land)."""
     file_path = Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}" / "F_Y_tot.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 # ============================================================================
-# D_CBA / F_X_DOM / F_Y_TOT — SCÉNARIOS WORLD / EUROPE (pas de séparation dom/imp)
+# D_CBA / F_X_DOM / F_Y_TOT -- WORLD / EUROPE SCENARIOS (no dom/imp split)
 # ============================================================================
-# Ces scénarios sont déjà agrégés en un seul fichier par LP (voir
-# reformat_d_cba_monde_europe.py) : la colonne Y_category y est déjà réduite à
-# "all", donc pas besoin d'exclude_y_category ici.
+# These scenarios are already aggregated into a single file per LP (see
+# reformat_d_cba_monde_europe.py): their Y_category column is already reduced
+# to "all", hence no need for exclude_y_category here.
 
 
 def load_d_cba_world_europe(scenario_folder_path, lp_name):
-    """Charge {lp}/d_cba.pkl pour un scénario World/Europe."""
+    """Load {lp}/d_cba.pkl for a World/Europe scenario."""
     file_path = Path(scenario_folder_path) / "extensions" / lp_name / "d_cba.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 def load_f_x_dom_world_europe(scenario_folder_path, lp_name):
-    """Charge {lp}/F_x_dom.pkl pour un scénario World/Europe."""
+    """Load {lp}/F_x_dom.pkl for a World/Europe scenario."""
     file_path = Path(scenario_folder_path) / "extensions" / lp_name / "F_x_dom.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 def load_f_y_tot_world_europe(scenario_folder_path, lp_name):
-    """Charge {lp}/F_Y_tot.pkl pour un scénario World/Europe, si présent."""
+    """Load {lp}/F_Y_tot.pkl for a World/Europe scenario, if present."""
     file_path = Path(scenario_folder_path) / "extensions" / lp_name / "F_Y_tot.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
 
 
 # ============================================================================
-# MATRICES D'INTENSITÉ M (bubble chart) ET DEMANDE FINALE Y
+# INTENSITY MATRICES M (bubble chart) AND FINAL DEMAND Y
 # ============================================================================
 
 
 def load_m_matrix(scenario_folder_path, lp_name, kind):
-    """Charge une matrice d'intensité environnementale M pour un LP et un type donné.
+    """Load an environmental intensity matrix M for a given LP and type.
 
     Args:
-        kind: "dom" (M_k.pkl de dom_{lp}), "imp" (M_k.pkl de imp_{lp}),
-            "row" (M_RoW.pkl de imp_{lp}, part "reste du monde" de l'import).
+        kind: "dom" (M_k.pkl of dom_{lp}), "imp" (M_k.pkl of imp_{lp}),
+            "row" (M_RoW.pkl of imp_{lp}, "rest of the world" part of the imports).
 
     Returns:
-        pd.DataFrame ou None si le fichier n'existe pas.
+        pd.DataFrame or None if the file does not exist.
     """
     if kind == "dom":
         folder, filename = f"dom_{lp_name}", "M_k.pkl"
@@ -308,20 +346,19 @@ def load_m_matrix(scenario_folder_path, lp_name, kind):
 
 
 def get_y_blocks(scenario_folder_path, excluded_y_categories=None):
-    """Charge system/Y.pkl pour un scénario et retourne (y_dom_5, y_imp_5) : deux
-    DataFrames 200 x 5 (5 colonnes identiques, dupliquées pour compatibilité avec
-    le pipeline de pondération par catégorie) utilisés pour dimensionner/pondérer
-    le bubble chart.
+    """Load system/Y.pkl for a scenario and return (y_dom_5, y_imp_5): two
+    200 x 5 DataFrames (5 identical columns, duplicated for compatibility with
+    the category weighting pipeline) used to size/weight the bubble chart.
 
     Args:
-        excluded_y_categories: None (défaut, comportement historique du bubble
-            chart) -> somme des 6 colonnes de Y.pkl ; sinon, somme des colonnes
-            dont le Y_category (2e niveau) n'est pas dans cette liste — ex.
-            ("GFCF", "Exports") pour la demande finale cohérente avec M_k.
+        excluded_y_categories: None (default, historical behavior of the
+            bubble chart) -> sum of the 6 columns of Y.pkl; otherwise, sum of
+            the columns whose Y_category (2nd level) is not in this list --
+            e.g. ("GFCF", "Exports") for the final demand consistent with M_k.
     """
     y_path = Path(scenario_folder_path) / "system" / "Y.pkl"
     if not y_path.exists():
-        raise FileNotFoundError(f"Y.pkl introuvable : {y_path}")
+        raise FileNotFoundError(f"Y.pkl not found: {y_path}")
 
     y_df = pd.read_pickle(y_path)
     if excluded_y_categories is None:

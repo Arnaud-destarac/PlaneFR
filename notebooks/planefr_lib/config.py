@@ -1,13 +1,10 @@
 """
-Chemins, constantes et paramètres partagés par toutes les analyses PlaneFR.
+Paths, constants and parameters shared by all PlaneFR analyses.
 
-Note sur les seuils "absolus" vs "par habitant" :
-le fichier seuils.xlsx (feuille "Synthèse") contient trois jeux de lignes pour
-les mêmes notions (Lower Safe Bound, Safe Limit, Upper Safe Bound, unité
-d'affichage, conversion) : un jeu en valeurs absolues et un jeu par habitant
-(suffixe "(p.cap)"). Les figures "multi-scénarios" (valeurs absolues) et "par
-habitant" (CBA/PBA) doivent donc passer le bon jeu de constantes aux
-fonctions de planefr_lib.
+thresholds.xlsx (sheet "All") contains two sets of rows for the same notions
+(display unit, conversion...): one in absolute values (_ABS constants, used
+by the figures) and one per capita (suffix "(p.cap)", _PER_CAPITA constants,
+used by processing.process_scenario_per_capita).
 """
 
 import os
@@ -15,90 +12,114 @@ import warnings
 from pathlib import Path
 
 # ============================================================================
-# CHEMINS
+# PATHS
 # ============================================================================
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_DIR / "data"
-# Version Exiobase des données : redirigeable via la variable d'environnement
-# PLANEFR_EXIOBASE_VERSION (positionnée par les scripts de pipeline de
-# matmat-ademe) ; par défaut 3.11.2 comme d'habitude.
+# Exiobase version of the data: can be redirected with the environment variable
+# PLANEFR_EXIOBASE_VERSION (set by the matmat-ademe pipeline scripts); 3.11.2
+# by default.
 BASE_DATA_DIR = DATA_DIR / os.environ.get("PLANEFR_EXIOBASE_VERSION", "3.11.2")
 
-# Redirigeable via la variable d'environnement PLANEFR_FIGURES_DIR (utile pour
-# vérifier qu'un notebook s'exécute correctement sans écraser les figures
-# actuelles) ; par défaut, le dossier figures/ du projet comme d'habitude.
+# Can be redirected with the environment variable PLANEFR_FIGURES_DIR (useful to
+# check that a notebook runs correctly without overwriting the current
+# figures); by default, the figures/ folder of the project.
 FIGURES_DIR = Path(os.environ.get("PLANEFR_FIGURES_DIR", str(PROJECT_DIR / "figures")))
 
-FACTEURS_CARAC_FILE = DATA_DIR / "facteurs de caractérisation.xlsx"
+CHARACTERIZATION_FACTORS_FILE = DATA_DIR / "characterization_factors.xlsx"
 BRIDGE_MATRICES_FILE = DATA_DIR / "bridge_matrices.xlsx"
-SEUILS_FILE = DATA_DIR / "seuils.xlsx"
+THRESHOLDS_FILE = DATA_DIR / "thresholds.xlsx"
 BUDGET_SHARES_FILE = DATA_DIR / "budget_shares.xlsx"
-# Pressions (empreinte CBA) ventilées par catégorie de ménages (enquête Budget
-# de famille) : 1 feuille par ventilation ("décile", "unité urbaine", "croisé").
-# Nom de base : le fichier lu est impacts_facteurs_agrégé_{groupe}*.xlsx (io.bdf_file).
+# Pressures (CBA footprint) broken down by household category (Budget de
+# famille survey): 1 sheet per breakdown ("décile", "unité urbaine", "croisé").
+# Base name: the file read is impacts_facteurs_agrégé_{group}*.xlsx (io.bdf_file).
 BDF_FILE = PROJECT_DIR.parent / "Github" / "ademe_eemrio" / "impacts_facteurs_agrégé.xlsx"
 BDF_WEIGHT_COL = "weight"
 BDF_TOTAL_ROW = "Average"
 
 # ============================================================================
-# SCÉNARIOS
+# CHARACTERIZATION FACTORS (characterization_factors.xlsx)
+# ============================================================================
+# One sheet for the full set of indicators, one for the agricultural scenario
+# groups ("{scenario}_agri", see io.is_agri_group).
+CF_SHEET = "All"
+CF_AGRI_SHEET = "Agri"
+
+# Columns (matched case-insensitively by io.load_characterization_factors,
+# since the "All" and "Agri" sheets do not use the same capitalization).
+CF_SUBPROCESS_COL = "Indicators"                 # sub-process (= thresholds.xlsx column)
+CF_LP_COL = "EXIOBASE groups"                    # LP = extension folder (dom_{lp}/imp_{lp})
+CF_STRESSOR_COL = "EXIOBASE stressors"           # EXIOBASE stressor (row of the MRIO tables)
+CF_UNIT_COL = "Units"
+CF_FACTOR_COL = "Characterization factors"
+
+# ============================================================================
+# THRESHOLDS (thresholds.xlsx)
+# ============================================================================
+THRESHOLDS_SHEET = "All"
+THRESHOLDS_AGRI_SHEET = "Agri"
+DLS_SHEET = "DLS"
+
+# ============================================================================
+# SCENARIOS
 # ============================================================================
 
-# Index du scénario de référence dans get_scenario_folders() : "Base_year_2015"
-# est toujours le premier par ordre alphabétique.
+# Index of the reference scenario in get_scenario_folders(): "Base_year_2015"
+# is always the first one in alphabetical order.
 REFERENCE_SCENARIO_IDX = 0
 
-# Nom du dossier du scénario de référence (baseline), attendu dans chaque groupe
-# de scénarios (cf. get_scenario_folders).
+# Folder name of the reference scenario (baseline), expected in every group of
+# scenarios (see get_scenario_folders).
 REFERENCE_SCENARIO_NAME = "Base_year_2015"
 
-# Groupe de scénarios affiché par défaut : sous-dossier de BASE_DATA_DIR
-# contenant les scénarios de transition 2050 calculés sur un jeu d'accounts
-# donné ("no_SSP" pour les accounts Base_year_2015, "SSP1_2050", "SSP2_2050"...
-# pour les accounts projetés selon un SSP, cf. run_engine_batch.ps1 de
-# matmat-ademe). Redirigeable via la variable d'environnement
-# PLANEFR_SCENARIO_GROUP, ou par notebook via le paramètre scenario_group de
-# get_scenario_folders. "" = anciens scénarios placés directement dans
-# BASE_DATA_DIR.
+# Scenario group displayed by default: sub-folder of BASE_DATA_DIR containing
+# the 2050 transition scenarios computed on a given set of accounts ("no_SSP"
+# for the Base_year_2015 accounts, "SSP1_2050", "SSP2_2050"... for the accounts
+# projected along an SSP, see run_engine_batch.ps1 of matmat-ademe). Can be
+# redirected with the environment variable PLANEFR_SCENARIO_GROUP, or per
+# notebook with the scenario_group parameter of get_scenario_folders.
+# "" = old scenarios placed directly in BASE_DATA_DIR.
 SCENARIO_GROUP = os.environ.get("PLANEFR_SCENARIO_GROUP", "no_SSP")
 
 
 def _is_scenario_folder(path):
-    """Un dossier de scénario contient un sous-dossier "extensions" (sortie engine ;
-    "system" est absent des dossiers 2019_* hors France), contrairement aux
-    dossiers de groupe (no_SSP, SSP1_2050...)."""
+    """A scenario folder contains an "extensions" sub-folder (engine output;
+    "system" is missing from the non-France 2019_* folders), unlike the group
+    folders (no_SSP, SSP1_2050...)."""
     return path.is_dir() and (path / "extensions").is_dir()
 
 
 def get_scenario_groups():
-    """Liste les groupes de scénarios disponibles (sous-dossiers de BASE_DATA_DIR
-    qui ne sont pas eux-mêmes des dossiers de scénario), triés par nom."""
+    """List the available scenario groups (sub-folders of BASE_DATA_DIR that
+    are not scenario folders themselves), sorted by name."""
     return sorted(
         d.name for d in BASE_DATA_DIR.iterdir() if d.is_dir() and not _is_scenario_folder(d)
     )
 
 
 def get_scenario_folders(exclude_2019=False, exclude_others=False, scenario_group=None):
-    """Liste les dossiers de scénarios du groupe demandé, triés par nom.
+    """List the scenario folders of the requested group, sorted by name.
 
-    Les scénarios affichés sont tous ceux du dossier BASE_DATA_DIR / scenario_group
-    (y compris le scénario de référence, REFERENCE_SCENARIO_NAME, qui doit donc s'y
-    trouver). Les dossiers "2019_*" sont toujours lus dans BASE_DATA_DIR.
+    The displayed scenarios are all those of the folder BASE_DATA_DIR /
+    scenario_group (including the reference scenario, REFERENCE_SCENARIO_NAME,
+    which must therefore be there). The "2019_*" folders are always read in
+    BASE_DATA_DIR.
 
     Args:
-        exclude_2019: si True, exclut les dossiers "2019_*" (France/World/Europe_27
-            en géographies alternatives) pour ne garder que base-year + scénarios 2050
-            — c'est le comportement voulu pour les figures multi-scénarios en valeurs
-            absolues. Si False, les inclut — nécessaire pour la figure par habitant
-            CBA/PBA, qui compare aussi France vs Europe vs Monde.
-        exclude_others: si True, ne garde que les dossiers "2019_*".
-        scenario_group: groupe de scénarios à afficher ("no_SSP", "SSP1_2050"...,
-            cf. get_scenario_groups()). None = SCENARIO_GROUP ; "" = scénarios
-            placés directement dans BASE_DATA_DIR.
+        exclude_2019: if True, excludes the "2019_*" folders (France/World/
+            Europe_27 as alternative geographies) to keep only base year + 2050
+            scenarios -- the intended behavior for the multi-scenario figures
+            in absolute values. If False, includes them -- needed for the
+            per-capita CBA/PBA figure, which also compares France vs Europe vs
+            World.
+        exclude_others: if True, keeps only the "2019_*" folders.
+        scenario_group: scenario group to display ("no_SSP", "SSP1_2050"...,
+            see get_scenario_groups()). None = SCENARIO_GROUP; "" = scenarios
+            placed directly in BASE_DATA_DIR.
 
     Returns:
-        list[Path]: dossiers de scénarios triés par nom.
+        list[Path]: scenario folders sorted by name.
     """
     if scenario_group is None:
         scenario_group = SCENARIO_GROUP
@@ -110,16 +131,16 @@ def get_scenario_folders(exclude_2019=False, exclude_others=False, scenario_grou
         group_dir = BASE_DATA_DIR / scenario_group
         if not group_dir.is_dir():
             raise ValueError(
-                f"Groupe de scénarios '{scenario_group}' introuvable dans {BASE_DATA_DIR}. "
-                f"Groupes disponibles : {get_scenario_groups()}"
+                f"Scenario group '{scenario_group}' not found in {BASE_DATA_DIR}. "
+                f"Available groups: {get_scenario_groups()}"
             )
-        # Tous les scénarios du dossier de groupe, et uniquement eux
+        # All the scenarios of the group folder, and only them
         scenario_folders = [d for d in group_dir.iterdir() if _is_scenario_folder(d)]
         if REFERENCE_SCENARIO_NAME not in {d.name for d in scenario_folders}:
             warnings.warn(
-                f"Le groupe '{scenario_group}' ne contient pas {REFERENCE_SCENARIO_NAME} : "
-                f"le scénario de référence (REFERENCE_SCENARIO_IDX) sera le premier par "
-                f"ordre alphabétique."
+                f"Group '{scenario_group}' does not contain {REFERENCE_SCENARIO_NAME}: "
+                f"the reference scenario (REFERENCE_SCENARIO_IDX) will be the first one "
+                f"in alphabetical order."
             )
     else:
         scenario_folders = [d for d in root_folders if "2019" not in d.name]
@@ -134,121 +155,112 @@ def get_scenario_folders(exclude_2019=False, exclude_others=False, scenario_grou
 
 
 # ============================================================================
-# SEUILS : noms des lignes de seuils.xlsx (feuille "Synthèse")
+# THRESHOLDS: row names of thresholds.xlsx (sheet "All")
 # ============================================================================
-# 3 seuils par sous-processus, du plus strict au plus laxiste -- noms de figure
-# repris des lignes "brutes" de seuils.xlsx (WORLD_BUDGET_ROW_LOWER/LB/UB
-# ci-dessous) : LOWER ("Lower Safe Bound", nouvelle ligne, ligne "Equality
-# (Lower bound)") < LB ("Safe Limit", seuil historique, ligne "Equality") < UB
-# ("Upper Safe Bound", ligne "Equality (Upper bound)").
+# 3 thresholds per sub-process, from the strictest to the loosest -- figure
+# names taken from the "raw" rows of thresholds.xlsx (WORLD_BUDGET_ROW_LOWER/
+# LB/UB below): LOWER ("Lower Safe Bound", row "Equality (Lower bound)") < LB
+# ("Safe Limit", historical threshold, row "Equality") < UB ("Upper Safe
+# Bound", row "Equality (Upper bound)").
 
-# Valeurs absolues (figures multi-scénarios : Synthèse, Overshoot)
 THRESHOLD_LOWER_ABS = "Equality (Lower bound)"
 THRESHOLD_LB_ABS = "Equality"
 THRESHOLD_UB_ABS = "Equality (Upper bound)"
 UNIT_ROW_ABS = "Figures unit"
 CONVERSION_ROW_ABS = "Unit conversion Exiobase"
 
-# Par habitant (figure comparaison CBA/PBA)
-THRESHOLD_LOWER_PER_CAPITA = "Equality (Lower bound) (p. cap)"
-THRESHOLD_LB_PER_CAPITA = "Equality (p.cap)"
-THRESHOLD_UB_PER_CAPITA = "Equality (Upper bound) (p.cap)"
+# Per capita (processing.process_scenario_per_capita)
 UNIT_ROW_PER_CAPITA = "Figures unit (p.cap)"
 CONVERSION_ROW_PER_CAPITA = "Unit conversion Exiobase (p.cap)"
 
-# threshold_lb_row (_ABS ou _PER_CAPITA) -> ligne LOWER correspondante : permet
-# aux fonctions qui reçoivent threshold_lb_row en paramètre générique (ex.
-# plot_overshoot.create_overshoot_safe_space_figure) de retrouver le 3e seuil
-# sans paramètre dédié.
-THRESHOLD_LOWER_FOR = {
-    THRESHOLD_LB_ABS: THRESHOLD_LOWER_ABS,
-    THRESHOLD_LB_PER_CAPITA: THRESHOLD_LOWER_PER_CAPITA,
-}
-
-# ============================================================================
-# SEUILS RECALCULÉS SELON UN PRINCIPE DE PARTAGE ("sharing_principle")
-# ============================================================================
-# Par défaut (sharing_principle=None), les figures lisent LOWER/LB/UB statiquement
-# dans seuils.xlsx via les lignes _ABS/_PER_CAPITA ci-dessus (comportement
-# historique). Si sharing_principle vaut "Equality 2050"/"Equality 2100"/"Equality
-# 2019", LOWER/LB/UB sont recalculés à la volée (partage égal per capita du budget
-# mondial) via processing.compute_sharing_seuil, en remplacement de la lecture
-# statique de "Equality (Lower bound)"/"Equality"/"Equality (Upper bound)" (et
-# leurs variantes par habitant).
-
-# Ligne (ou année, pour "Equality 2019") de seuils.xlsx/feuille "Population" à utiliser
-# comme référence de population Monde/France pour chaque principe de partage.
-SHARING_PRINCIPLE_POPULATION_ROW = {
-    "Equality 2050": "Moyenne 2019-2050",
-    "Equality 2100": "Moyenne 2019-2100",
-    "Equality 2019": 2019,
-}
-
-# Lignes de seuils.xlsx (feuille "Synthèse") donnant le budget mondial LOWER/LB/UB,
-# dans l'unité "Unit budget" (échelle mondiale, ex. GtCO2eq) -- différente de
-# "Figures unit"/"Figures unit (p.cap)" utilisées partout ailleurs dans le pipeline.
+# Rows of thresholds.xlsx (sheet "All") giving the LOWER/LB/UB world budget,
+# in the "Unit budget" unit (world scale, e.g. GtCO2eq) -- different from the
+# "Figures unit" used everywhere else in the pipeline.
 WORLD_BUDGET_ROW_LOWER = "Lower safe bound"
 WORLD_BUDGET_ROW_LB = "Safe limit"
 WORLD_BUDGET_ROW_UB = "Upper safe bound"
 
-# Facteurs de conversion "Unit budget" (mondiale) -> "Figures unit"/"Figures unit
-# (p.cap)", par sous-processus (ex. GHG emissions : GtCO2eq -> MtCO2eq ou tCO2eq) :
-# mêmes lignes utilisées en diviseur, comme CONVERSION_ROW_ABS/CONVERSION_ROW_PER_CAPITA.
+# Conversion factor "Unit budget" (world) -> "Figures unit", by sub-process
+# (e.g. GHG emissions: GtCO2eq -> MtCO2eq): row used as a divisor, like
+# CONVERSION_ROW_ABS.
 WORLD_CONVERSION_ROW_ABS = "Unit conversion budget"
-WORLD_CONVERSION_ROW_PER_CAPITA = "Unit conversion budget (p. cap)"
 
 # ============================================================================
-# PARTS DU BUDGET MONDIAL PAR RÉGION EXIOBASE (budget_shares.xlsx)
+# POPULATION (sheet "Population" of budget_shares.xlsx, see io.load_population_df)
 # ============================================================================
-# Alternative au partage égal per capita ci-dessus (SHARING_PRINCIPLE_POPULATION_ROW) :
-# le budget d'un pays/région est le budget mondial multiplié par une part lue dans
-# budget_shares.xlsx, et non plus déduit d'un ratio de populations. Utilisé par
-# plot_overshoot.create_overshoot_safe_space_figure_by_region (figure en valeurs
-# absolues, donc conversions _ABS : WORLD_CONVERSION_ROW_ABS / CONVERSION_ROW_ABS).
+# UN population (thousands) by EXIOBASE region code (rows) and by period
+# (columns "UN – Population <period> (thousands)", read under the key <period>).
+POPULATION_SHEET = "Population"
+POPULATION_COLUMN_PATTERN = r"^UN\W+Population\s+(\S+)"
+
+# Population periods of the per-capita sensitivity of W in
+# plot_overshoot.create_overshoot_safe_space_figure_by_region (the world limit
+# is divided by the World population of each period, see
+# processing.compute_world_period_budget).
+WORLD_SENSITIVITY_POPULATION_PERIODS = ("2019", "2019-2050", "2019-2100")
+
+# Population period of the world pressures (2019_W folder): the per-capita
+# limit of a given period is compared to them by scaling it to this population
+# (processing.compute_world_period_budget).
+WORLD_PRESSURE_POPULATION_PERIOD = "2019"
+
+# Population period of a scenario, by year found in its folder name
+# (processing.get_population): "2019" / "2015", otherwise "2050".
+SCENARIO_POPULATION_PERIODS = ("2019", "2015")
+DEFAULT_SCENARIO_POPULATION_PERIOD = "2050"
+
+# ============================================================================
+# SHARES OF THE WORLD BUDGET BY EXIOBASE REGION (budget_shares.xlsx)
+# ============================================================================
+# The budget of a country/region is the world budget multiplied by a share
+# read in budget_shares.xlsx. Used by plot_overshoot.create_overshoot_safe_space_figure_by_region
+# (figure in absolute values, hence _ABS conversions: WORLD_CONVERSION_ROW_ABS /
+# CONVERSION_ROW_ABS).
 
 BUDGET_SHARES_SHEET = "Budget_shares_regions"
 
-# La feuille commence par un titre et deux lignes de notes : la vraie ligne
-# d'en-têtes ("Code EXIOBASE", "Région", "Part EPC ref. ...") est la 4e.
+# Every sheet of budget_shares.xlsx starts with a title and two note rows: the
+# actual header row ("EXIOBASE code", "Region", "EPC share ref. ...") is the 4th.
 BUDGET_SHARES_HEADER_ROW = 3
 
-# Colonne servant d'index (code région EXIOBASE : FR, EU27, W, CN...).
-BUDGET_SHARE_CODE_COLUMN = "Code EXIOBASE"
+# Column used as index (EXIOBASE region code: FR, EU27, W, CN...) and region name.
+BUDGET_SHARE_CODE_COLUMN = "EXIOBASE code"
+BUDGET_SHARE_REGION_COLUMN = "Region"
 
-# Principe de partage -> motifs (regex, insensibles à la casse) identifiant la
-# colonne de part à utiliser pour la référence (position des bulles) et pour les
-# deux bornes de sensibilité.
-# Les motifs "ref" sont ancrés sur "Part ..." à dessein : la feuille contient
-# aussi "Rapport CTR / EPC ref." (qui contient "EPC ref" sans être une part) et
-# "Part CTR réf. – calcul direct sur 49 régions" (accentué, variante
-# d'illustration) — ni l'une ni l'autre ne doit être sélectionnée.
+# Sharing principle -> patterns (regex, case-insensitive) identifying the share
+# column to use for the reference (position of the bubbles) and for the two
+# sensitivity bounds.
+# The "ref" patterns are anchored on "... share ref" on purpose: the sheet also
+# contains "CTR / EPC ratio ref." (which contains "EPC" and "ref" without being
+# a share), which must not be selected.
 BUDGET_SHARE_COLUMN_PATTERNS = {
-    "EPC": {"ref": r"^Part\s+EPC\s+ref", "min": r"^EPC\s+min$", "max": r"^EPC\s+max$"},
-    "CTR": {"ref": r"^Part\s+CTR\s+ref", "min": r"^CTR\s+min$", "max": r"^CTR\s+max$"},
+    "EPC": {"ref": r"^EPC\s+share\s+ref", "min": r"^EPC\s+min$", "max": r"^EPC\s+max$"},
+    "CTR": {"ref": r"^CTR\s+share\s+ref", "min": r"^CTR\s+min$", "max": r"^CTR\s+max$"},
 }
 
-# Feuille détaillée de budget_shares.xlsx, dont io.load_budget_shares_df ajoute
-# les colonnes « UN – EPC <période> » (parts EPC calculées sur la population ONU,
-# WPP 2024) à celles de BUDGET_SHARES_SHEET.
-BUDGET_SHARES_VARIANTS_SHEET = "Budget_shares_variantes"
+# Detailed sheet of budget_shares.xlsx, whose "UN – EPC <period>" columns (EPC
+# shares computed on the UN population, WPP 2024) io.load_budget_shares_df adds
+# to those of BUDGET_SHARES_SHEET. The sheet name is referenced by cell in the
+# formulas of thresholds.xlsx: do not rename it.
+BUDGET_SHARES_VARIANTS_SHEET = "Budget_shares_variants"
 UN_SHARE_COLUMN_PATTERN = r"^UN\W+EPC\b"
 
-# EPC de référence de plot_overshoot.create_overshoot_safe_space_figure_by_region :
-# colonne ONU (motif regex) utilisée par défaut, et exceptions par sous-processus
-# (nom de colonne de seuils.xlsx/"Synthèse", comparé sans tenir compte de la casse).
-# Remplace la colonne "Part EPC ref. ..." pour la référence uniquement : les
-# bornes de sensibilité restent "EPC min" / "EPC max".
+# Reference EPC of plot_overshoot.create_overshoot_safe_space_figure_by_region:
+# UN column (regex pattern) used by default, and exceptions by sub-process
+# (column name of thresholds.xlsx/"All", compared case-insensitively).
+# Replaces the "EPC share ref. ..." column for the reference only: the
+# sensitivity bounds remain "EPC min" / "EPC max".
 REGION_FIGURE_EPC_REF_PATTERN = r"^UN\W+EPC\s+2019$"
 REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS = {
     "GHG emissions": r"^UN\W+EPC\s+2019-2100$",
     "GHG emissions (2019)": r"^UN\W+EPC\s+2019-2100$",
 }
 
-# Colonne de seuils.xlsx/"Synthèse" fournissant les budgets mondiaux (Lower /
-# Safe limit / Upper) d'un sous-processus dans cette même figure, quand elle
-# diffère du nom du sous-processus. Les empreintes et l'unité affichée restent
-# celles du sous-processus d'origine.
-REGION_FIGURE_SEUIL_COLUMN_BY_SUBPROCESS = {
+# Column of thresholds.xlsx/"All" giving the world budgets (Lower / Safe limit /
+# Upper) of a sub-process in that same figure, when it differs from the name
+# of the sub-process. The footprints and the displayed unit remain those of
+# the original sub-process.
+REGION_FIGURE_THRESHOLD_COLUMN_BY_SUBPROCESS = {
     "GHG emissions": "GHG emissions (2019)",
 }
 
@@ -262,15 +274,15 @@ def _lookup_ci(mapping, subprocess_name, default):
 
 
 def region_figure_epc_ref_pattern(subprocess_name):
-    """Motif de la colonne EPC de référence pour `subprocess_name` (voir ci-dessus)."""
+    """Pattern of the reference EPC column for `subprocess_name` (see above)."""
     return _lookup_ci(REGION_FIGURE_EPC_REF_PATTERN_BY_SUBPROCESS, subprocess_name,
                       REGION_FIGURE_EPC_REF_PATTERN)
 
 
-# sharing_principle="EPC" de plot_radial_synthesis.create_radial_synthesis_figure :
-# budget France = budget mondial x part de la ligne RADIAL_EPC_REGION_CODE de
-# budget_shares.xlsx, lue dans la colonne ONU ci-dessous (motif regex), avec
-# exceptions par sous-processus (comparées sans tenir compte de la casse).
+# sharing_principle="EPC" of plot_radial_synthesis.create_radial_synthesis_figure:
+# France budget = world budget x share of the RADIAL_EPC_REGION_CODE row of
+# budget_shares.xlsx, read in the UN column below (regex pattern), with
+# exceptions by sub-process (compared case-insensitively).
 RADIAL_EPC_REGION_CODE = "FR"
 RADIAL_EPC_PATTERN = r"^UN\W+EPC\s+2050$"
 RADIAL_EPC_PATTERN_BY_SUBPROCESS = {
@@ -280,97 +292,92 @@ RADIAL_EPC_PATTERN_BY_SUBPROCESS = {
 
 
 def radial_epc_pattern(subprocess_name):
-    """Motif de la colonne EPC utilisée par la figure radiale pour `subprocess_name`."""
+    """Pattern of the EPC column used by the radial figure for `subprocess_name`."""
     return _lookup_ci(RADIAL_EPC_PATTERN_BY_SUBPROCESS, subprocess_name, RADIAL_EPC_PATTERN)
 
 
-def region_figure_seuil_column(subprocess_name):
-    """Colonne de seuils.xlsx portant les budgets de `subprocess_name` dans
-    create_overshoot_safe_space_figure_by_region (voir ci-dessus)."""
-    return _lookup_ci(REGION_FIGURE_SEUIL_COLUMN_BY_SUBPROCESS, subprocess_name, subprocess_name)
+def region_figure_threshold_column(subprocess_name):
+    """Column of thresholds.xlsx holding the budgets of `subprocess_name` in
+    create_overshoot_safe_space_figure_by_region (see above)."""
+    return _lookup_ci(REGION_FIGURE_THRESHOLD_COLUMN_BY_SUBPROCESS, subprocess_name, subprocess_name)
 
-# Code région du Monde dans budget_shares.xlsx. Sa part vaut 1 sans encadrement
-# min/max : sa sensibilité est calculée par habitant, en faisant varier la période
-# de population (SHARING_PRINCIPLE_POPULATION_ROW) -- voir
-# processing.compute_world_period_budget.
+
+# World region code in budget_shares.xlsx (share 1, without min/max bounds: its
+# sensitivity is computed per capita, see processing.compute_world_period_budget).
 WORLD_REGION_CODE = "W"
 
-# Année de population des pressions mondiales (dossier 2019_W) : la limite par
-# habitant d'une période donnée leur est comparée en la ramenant à cette population.
-WORLD_PRESSURE_POPULATION_ROW = 2019
-
-# Code région utilisé pour un scénario dont le nom de dossier ne contient aucun
-# code EXIOBASE (Base_year, TREND, Tech_NZE, Sufficiency_NZE... : tous des
-# scénarios France).
+# Region code used for a scenario whose folder name contains no EXIOBASE code
+# (Base_year, TREND, Tech_NZE, Sufficiency_NZE...: all France scenarios).
 DEFAULT_REGION_CODE = "FR"
 
 # ============================================================================
-# COULEURS DES CATÉGORIES DE CONSOMMATION
+# COLORS OF THE CONSUMPTION CATEGORIES
 # ============================================================================
 
 CATEGORY_COLORS = {
-    0: "#6ac1ff",  # Bleu
+    0: "#6ac1ff",  # Blue
     1: "#fba65b",  # Orange
-    2: "#4fff4f",  # Vert
-    3: "#ff6d6d",  # Rouge
-    4: "#d0a3fa",  # Violet
+    2: "#4fff4f",  # Green
+    3: "#ff6d6d",  # Red
+    4: "#d0a3fa",  # Purple
 }
 
-# Ordre canonique d'affichage des catégories (F_Y toujours en dernier, bien identifiable)
+# Canonical display order of the categories (F_Y always last, easy to spot)
 CATEGORY_ORDER = ["Food", "Housing", "Mobility", "Final goods", "Final services", "F_Y"]
 
-# Couleur stable par nom de catégorie (indépendante de la position après agrégation multi-LP)
+# Stable color by category name (independent of the position after multi-LP aggregation)
 CATEGORY_COLOR_MAP = {
-    0: "#84c9fa",  # Bleu
+    0: "#84c9fa",  # Blue
     1: "#f9c18f",  # Orange
-    2: "#8cfc8c",  # Vert
-    3: "#fd9393",  # Rouge
-    4: "#d0a3fa",  # Violet
+    2: "#8cfc8c",  # Green
+    3: "#fd9393",  # Red
+    4: "#d0a3fa",  # Purple
     "F_Y": "#7f7f7f",
 }
 
 # ============================================================================
-# COULEUR DU 3E SEUIL ("Lower Safe Bound", THRESHOLD_LOWER_ABS/PER_CAPITA)
+# COLOR OF THE 3RD THRESHOLD ("Lower Safe Bound", THRESHOLD_LOWER_ABS)
 # ============================================================================
-# Vert clair, distinct du vert du seuil historique (LB, "Safe Limit") utilisé
-# par plot_overshoot/plot_radial_synthesis/plot_stacked_bar -- partagé ici pour
-# rester cohérent entre les 3 figures.
+# Light green, distinct from the green of the historical threshold (LB, "Safe
+# Limit") used by plot_overshoot/plot_radial_synthesis/plot_stacked_bar --
+# shared here to stay consistent across the 3 figures.
 LOWER_SAFE_BOUND_COLOR = "#90ee90"
 
-# Plancher social (DLS) : partagé par plot_radial_synthesis/plot_stacked_bar.
-# Gradation de bleu, du plus clair (DLS lower bound) au plus foncé (DLS upper
-# bound), autour du bleu ciel historique du DLS central.
+# Social floor (DLS): shared by plot_radial_synthesis/plot_stacked_bar.
+# Shades of blue, from the lightest (DLS lower bound) to the darkest (DLS
+# upper bound), around the historical sky blue of the central DLS.
 DLS_COLOR = "#00d5ff"
 DLS_LOWER_COLOR = "#20a4be"
 DLS_UPPER_COLOR = "#0077b6"
 
-# Groupe de scénarios "année de base" : DLS lus sur les lignes "DLS ..." de la
-# feuille DLS ; pour tout autre groupe (scénarios 2050), sur "DLS 2050 ...".
+# "Base year" scenario group: DLS read on the "DLS ..." rows of the DLS sheet;
+# for any other group (2050 scenarios), on "DLS 2050 ...".
 DLS_BASE_YEAR_GROUP = "Base_year"
 
-# Figure radiale Bdf avec comparaison de 2 scénarios : DLS central de l'année de
-# base (DLS_COLOR) et DLS 2050, dans un bleu un peu plus sombre.
+# BdF radial figure comparing 2 scenarios: central DLS of the base year
+# (DLS_COLOR) and DLS 2050, in a slightly darker blue.
 DLS_2050_COLOR = "#0096c7"
 
-# (clé, suffixe de ligne dans la feuille DLS, couleur, libellé de légende)
+# (key, row suffix in the DLS sheet, color, legend label). A missing row (e.g.
+# no "DLS lower bound" row in thresholds.xlsx/DLS) is simply not drawn.
 DLS_LEVELS = (
     ("dls_lower", " lower bound", DLS_LOWER_COLOR, "DLS lower bound"),
     ("dls", "", DLS_COLOR, "DLS"),
     ("dls_upper", " upper bound", DLS_UPPER_COLOR, "DLS upper bound"),
 )
 
-# Nom (insensible à la casse) du scénario tendanciel : "TEND" ou "TEND_2050".
-# Placé juste à côté de la référence dans les figures qui trient les scénarios
-# (processing.sort_scenarios_by_reduction). Correspondance sur le nom ENTIER :
-# les variantes ("S1-TEND", "TEND-TEND", "TEND_Sus"...) sont triées avec les
-# autres scénarios.
+# Name (case-insensitive) of the trend scenario: "TEND" or "TEND_2050".
+# Placed right next to the reference in the figures that sort the scenarios
+# (processing.sort_scenarios_by_reduction). Matched on the WHOLE name: the
+# variants ("S1-TEND", "TEND-TEND", "TEND_Sus"...) are sorted with the other
+# scenarios.
 TREND_SCENARIO_MARKER = "TEND"
 TREND_SCENARIO_PATTERN = rf"^{TREND_SCENARIO_MARKER}(_\d{{4}})?$"
 
 # ============================================================================
-# FIGURE OVERSHOOT / SAFE OPERATING SPACE
+# OVERSHOOT / SAFE OPERATING SPACE FIGURE
 # ============================================================================
 
-# Bornes relatives (en multiples de la limite basse) du dégradé de fond safe/risk.
+# Relative bounds (in multiples of the lower limit) of the safe/risk background gradient.
 SAFE_LIMIT_REL = 1.0
 RISK_TRANSITION_REL = 2.0

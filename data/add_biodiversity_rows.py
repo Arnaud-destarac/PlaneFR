@@ -1,18 +1,22 @@
 """
-Ajoute a la feuille "synthese" de "facteurs de caracterisation.xlsx" une ligne par
-colonne (extension exiobase) de "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
-dont la somme des lignes en unite PDF.m2.yr (metrique biodiversite d'Impact World+) est non nulle.
+Adds to the "All" sheet of characterization_factors.xlsx one row per column
+(exiobase stressor) of "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
+whose sum over the rows in PDF.m2.yr units (biodiversity metric of Impact World+)
+is non-zero.
 
-Seules les lignes dont le libelle se termine par "(PDF.m2.yr)" sont sommees : ce sont les
-indicateurs relatifs a la biodiversite (les autres lignes du fichier - DALY, CTUh, kg eq,
-m3 eq, etc. - portent sur d'autres categories d'impact et ne doivent pas etre melangees).
+Only the rows whose label ends with "(PDF.m2.yr)" are summed: these are the
+biodiversity indicators (the other rows of the file - DALY, CTUh, kg eq, m3 eq,
+etc. - relate to other impact categories and must not be mixed in).
 
-Pour chaque colonne retenue :
-    - "Extensions exiobase"          -> nom de la colonne
-    - "Unite"                        -> laisse vide
-    - "Sous-processus"               -> "Biodiversity loss"
-    - "Processus du systeme Terre"   -> laisse vide
-    - "Facteurs de caracterisation"  -> somme des valeurs (lignes PDF.m2.yr) de la colonne
+For each retained column:
+    - "Indicators"                -> BIODIVERSITY_INDICATOR
+    - "EXIOBASE groups"           -> left empty (to be filled in by hand: LP of the stressor)
+    - "EXIOBASE stressors"        -> name of the column
+    - "Units"                     -> left empty
+    - "Characterization factors"  -> sum of the values (PDF.m2.yr rows) of the column
+
+One-shot script: the Impact World+ file is not kept in data/, put it back next
+to this script before running it again.
 """
 
 import shutil
@@ -21,19 +25,20 @@ from pathlib import Path
 import openpyxl
 
 DATA_DIR = Path(__file__).resolve().parent
-SYNTHESE_PATH = DATA_DIR / "facteurs de caractérisation.xlsx"
+CF_PATH = DATA_DIR / "characterization_factors.xlsx"
 IMPACT_WORLD_PATH = DATA_DIR / "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
 
-SHEET_SYNTHESE = "synthèse"
+SHEET_CF = "All"
 SHEET_IMPACT_WORLD = "Sheet1"
 
-COL_PROCESSUS_TERRE = 1  # A
-COL_SOUS_PROCESSUS = 2  # B
-COL_EXTENSIONS_EXIOBASE = 3  # C
-COL_UNITE = 4  # D
-COL_FACTEURS_CARACTERISATION = 5  # E
+# Columns of the "All" sheet of characterization_factors.xlsx
+COL_INDICATOR = 1  # A
+COL_EXIOBASE_GROUP = 2  # B
+COL_EXIOBASE_STRESSOR = 3  # C
+COL_UNIT = 4  # D
+COL_CHARACTERIZATION_FACTOR = 5  # E
 
-SOUS_PROCESSUS_VALUE = "Biodiversity loss"
+BIODIVERSITY_INDICATOR = "Biodiversity loss - PDF"
 
 
 PDF_UNIT_SUFFIX = "(PDF.m2.yr)"
@@ -74,37 +79,37 @@ def compute_nonzero_column_sums(ws, biodiversity_rows):
 
 
 def main():
-    backup_path = SYNTHESE_PATH.with_name(SYNTHESE_PATH.stem + " (backup avant ajout biodiversity loss).xlsx")
+    backup_path = CF_PATH.with_name(CF_PATH.stem + " (backup before biodiversity loss rows).xlsx")
     if backup_path.exists():
-        # Repart toujours de la sauvegarde pristine pour eviter d'empiler des lignes
-        # a chaque nouvelle execution du script (ex: apres correction du calcul).
-        shutil.copy2(backup_path, SYNTHESE_PATH)
-        print(f"Fichier restauré depuis la sauvegarde : {backup_path.name}")
+        # Always start again from the pristine backup to avoid stacking rows
+        # at each new run of the script (e.g. after fixing the computation).
+        shutil.copy2(backup_path, CF_PATH)
+        print(f"File restored from the backup: {backup_path.name}")
     else:
-        shutil.copy2(SYNTHESE_PATH, backup_path)
-        print(f"Sauvegarde créée : {backup_path.name}")
+        shutil.copy2(CF_PATH, backup_path)
+        print(f"Backup created: {backup_path.name}")
 
     wb_impact = openpyxl.load_workbook(IMPACT_WORLD_PATH, data_only=True)
     ws_impact = wb_impact[SHEET_IMPACT_WORLD]
     biodiversity_rows = get_biodiversity_rows(ws_impact)
-    print(f"{len(biodiversity_rows)} lignes '(PDF.m2.yr)' identifiées comme indicateurs de biodiversité.")
+    print(f"{len(biodiversity_rows)} '(PDF.m2.yr)' rows identified as biodiversity indicators.")
     nonzero_sums = compute_nonzero_column_sums(ws_impact, biodiversity_rows)
-    print(f"{len(nonzero_sums)} colonnes avec somme non nulle sur {ws_impact.max_column - 1} colonnes.")
+    print(f"{len(nonzero_sums)} columns with a non-zero sum out of {ws_impact.max_column - 1} columns.")
 
-    wb_synthese = openpyxl.load_workbook(SYNTHESE_PATH, data_only=False)
-    ws_synthese = wb_synthese[SHEET_SYNTHESE]
+    wb_cf = openpyxl.load_workbook(CF_PATH, data_only=False)
+    ws_cf = wb_cf[SHEET_CF]
 
-    next_row = ws_synthese.max_row + 1
+    next_row = ws_cf.max_row + 1
     for offset, (colname, total) in enumerate(nonzero_sums):
         r = next_row + offset
-        ws_synthese.cell(row=r, column=COL_PROCESSUS_TERRE, value=None)
-        ws_synthese.cell(row=r, column=COL_SOUS_PROCESSUS, value=SOUS_PROCESSUS_VALUE)
-        ws_synthese.cell(row=r, column=COL_EXTENSIONS_EXIOBASE, value=colname)
-        ws_synthese.cell(row=r, column=COL_UNITE, value=None)
-        ws_synthese.cell(row=r, column=COL_FACTEURS_CARACTERISATION, value=total)
+        ws_cf.cell(row=r, column=COL_INDICATOR, value=BIODIVERSITY_INDICATOR)
+        ws_cf.cell(row=r, column=COL_EXIOBASE_GROUP, value=None)
+        ws_cf.cell(row=r, column=COL_EXIOBASE_STRESSOR, value=colname)
+        ws_cf.cell(row=r, column=COL_UNIT, value=None)
+        ws_cf.cell(row=r, column=COL_CHARACTERIZATION_FACTOR, value=total)
 
-    wb_synthese.save(SYNTHESE_PATH)
-    print(f"{len(nonzero_sums)} lignes ajoutées à la feuille '{SHEET_SYNTHESE}' (lignes {next_row} à {next_row + len(nonzero_sums) - 1}).")
+    wb_cf.save(CF_PATH)
+    print(f"{len(nonzero_sums)} rows added to sheet '{SHEET_CF}' (rows {next_row} to {next_row + len(nonzero_sums) - 1}).")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-# Dépendances Python du projet PlaneFR (notebooks/ + scripts de reformatage).
-# Versions figées sur l'environnement de développement actuel (Python 3.14).
-# Installation : pip install -r requirements.txt
+# Python dependencies of the PlaneFR project (notebooks/ + reformatting scripts).
+# Versions pinned on the current development environment (Python 3.14).
+# Installation: pip install -r requirements.txt
 
 pandas==3.0.1
 numpy==2.4.3
@@ -9,7 +9,10 @@ seaborn==0.13.2
 openpyxl==3.1.5
 pymrio==0.6.3
 
-# Exécution des notebooks (kernel Jupyter + conversion/exécution headless)
+# data/budget_shares.py (planetary budget shares by EXIOBASE region)
+country_converter==1.3.2
+
+# Notebook execution (Jupyter kernel + headless conversion/execution)
 ipykernel==7.1.0
 jupyter_client==8.8.0
 jupyter_core==5.9.1

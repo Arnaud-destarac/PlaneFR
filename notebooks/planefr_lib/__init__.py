@@ -1,13 +1,13 @@
 """
-planefr_lib : bibliothèque partagée par les notebooks d'analyse de PlaneFR.
+planefr_lib: library shared by the PlaneFR analysis notebooks.
 
-Regroupe le code auparavant dupliqué dans plusieurs notebooks (chargement des
-données, filtrage/pondération par facteur de caractérisation, figures
-"overshoot / safe operating space", bubble charts, barres empilées).
+Gathers code that used to be duplicated across several notebooks (data
+loading, filtering/weighting by characterization factor, "overshoot / safe
+operating space" figures, bubble charts, stacked bars).
 
-Utilisation depuis un notebook du dossier notebooks/ (voir les notebooks
-existants pour le snippet complet, qui localise ce dossier dynamiquement au
-lieu d'un chemin codé en dur) :
+Usage from a notebook in the notebooks/ folder (see the existing notebooks for
+the full snippet, which locates this folder dynamically instead of using a
+hard-coded path):
 
     import sys
     from pathlib import Path
@@ -19,5 +19,5 @@ lieu d'un chemin codé en dur) :
         sys.path.insert(0, str(notebooks_dir))
 
     from planefr_lib import config, io, processing, colors
-    from planefr_lib.plot_overshoot import create_overshoot_safe_space_figure
+    from planefr_lib.plot_overshoot import create_overshoot_safe_space_figure_by_region
 """
