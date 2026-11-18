@@ -1,14 +1,16 @@
 """
 "Overshoot / Safe Operating Space" figure: 1 row per planetary boundary (LP),
 position of each scenario on the x axis relative to the lower limit (1L =
-equality threshold), green -> orange -> purple gradient background (safe zone
+equality boundary), green -> orange -> purple gradient background (safe zone
 -> increasing risk -> high-risk zone), axis break if a scenario exceeds
 x_main_max times the lower limit.
 
-Public function: create_overshoot_safe_space_figure_by_region -- absolute
-values (nothing is divided by the population, neither the footprints nor the
-budgets), budget of each country/region obtained by multiplying the world
-budget by its share read in budget_shares.xlsx ("EPC"/"CTR" principles).
+Public function: create_multi_regions_synthesis (multi-regions_synthesis
+notebook) -- absolute values (nothing is divided by the population, neither
+the footprints nor the budgets), budget of each country/region obtained by
+multiplying the world budget by its share read in budget_shares.xlsx
+("EPC"/"CTR" principles). Writes its data into an Excel workbook if
+excel_path is given (see figure_export).
 """
 
 import re
@@ -19,19 +21,19 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 
-from . import colors, config, processing
+from . import colors, config, figure_export, processing
 from .processing import DOMESTIC, IMPORTED
 
 # Font size of the X axis ticks in "nL" (e.g. 1L, 2L... 7L, 8L...), shared by
 # the main axis and the break axis so that they stay identical.
 AXIS_TICK_LABEL_FONTSIZE = 13
 
-# title_above_bar=True only -- height (fraction of bar height) taken by the 2
-# lines of the title (name + unit) + the space between them, at fontsize=13.
+# Height (fraction of bar height) taken by the single line of the title
+# (LP name), at fontsize=13 (about half of the former 2-line block, 0.35).
 # Used to size `hspace` (the space between bars) automatically from the two
 # adjustable gaps title_gap_below_bar/title_gap_above_bar, so that the title
 # always has room to fit.
-TITLE_BLOCK_HEIGHT = 0.35
+TITLE_BLOCK_HEIGHT = 0.18
 
 # show_value_overshoot=True only -- height (fraction of bar height) reserved
 # above each bar for its own "nL" axis (ticks + labels), added to `hspace` and
@@ -45,27 +47,9 @@ VALUE_AXIS_TICK_LABEL_FONTSIZE = 11
 # ============================================================================
 
 
-def _fmt_abs(value):
-    """Format an absolute value for annotation (non-breaking thousands separator)."""
-    if value is None or not np.isfinite(value):
-        return "NA"
-    if abs(value) >= 1000:
-        return f"{value:,.0f}".replace(",", " ")
-    if abs(value) >= 100:
-        return f"{value:.0f}"
-    if abs(value) >= 10:
-        return f"{value:.1f}"
-    return f"{value:.2f}"
-
-
 def _total_footprint(lp_payload):
     """Total footprint (domestic + imported) for a indicator."""
     return float(lp_payload[DOMESTIC].sum() + lp_payload[IMPORTED].sum())
-
-
-def _get_lp_unit(thresholds_df, indicator_name, unit_row):
-    """Get the display unit of an LP, or "" if missing."""
-    return processing.lookup_first_text(thresholds_df, unit_row, indicator_name)
 
 
 def _draw_gradient_segment(ax, x0, x1, seg_colors, y0=0.10, y1=0.90):
@@ -77,21 +61,52 @@ def _draw_gradient_segment(ax, x0, x1, seg_colors, y0=0.10, y1=0.90):
     ax.imshow(grad, extent=[x0, x1, y0, y1], aspect="auto", cmap=cmap, interpolation="bicubic", zorder=0)
 
 
-def _draw_lp_background(ax, x_min, x_max):
+def _draw_lp_background(ax, x_end, safe_x=None, risk_x=None):
     """Background safe (green) -> increasing risk (yellow/orange) -> high risk
-    (red/purple), with transitions at SAFE_LIMIT_REL (1L) and RISK_TRANSITION_REL (2L)."""
-    _draw_gradient_segment(ax, max(x_min, 0), min(x_max, config.SAFE_LIMIT_REL), ["#0b7d3e", "#73bf44"])
-    _draw_gradient_segment(ax, max(x_min, config.SAFE_LIMIT_REL), min(x_max, config.RISK_TRANSITION_REL),
-                            ["#f5dd3d", "#eb8f1e"])
-    _draw_gradient_segment(ax, max(x_min, config.RISK_TRANSITION_REL), x_max,
-                            ["#e7731c", "#d62324", "#8f1f64", "#4f256d"])
+    (red/purple), with transitions at safe_x (Safe Boundary, SAFE_BOUNDARY_REL by
+    default) and risk_x (High-Risk Boundary, RISK_TRANSITION_REL by default).
+
+    The three zones are drawn over their whole extent in data coordinates
+    ([0, safe_x], [safe_x, risk_x], [risk_x, x_end]) and clipped by the axes:
+    called with the same x_end on the main axis and on the break axis, the
+    gradient continues from one to the other (each axis shows its portion).
+    The xlim of `ax` must be set beforehand."""
+    safe_x = config.SAFE_BOUNDARY_REL if safe_x is None else safe_x
+    risk_x = config.RISK_TRANSITION_REL if risk_x is None else max(risk_x, safe_x)
+    _draw_gradient_segment(ax, 0, safe_x, ["#0b7d3e", "#73bf44"])
+    _draw_gradient_segment(ax, safe_x, risk_x, ["#f5dd3d", "#eb8f1e"])
+    _draw_gradient_segment(ax, risk_x, max(x_end, risk_x), HIGH_RISK_COLORS)
 
 
-def _draw_above_break_uniform(ax, x_min, x_max):
-    """Beyond x_main_max, uniform color equal to the color reached at the end of the gradient."""
+HIGH_RISK_COLORS = ["#e7731c", "#d62324", "#8f1f64", "#4f256d"]
+# Beyond the break: continuation of the High-Risk gradient, from its end color
+# towards a darker purple (further = darker).
+HIGH_RISK_BEYOND_BREAK_COLORS = ["#4f256d", "#1f0b2e"]
+
+
+def _draw_break_background(ax, x_min, x_max, x_main_end, safe_x=None, risk_x=None):
+    """Background of the break axis ([x_min, x_max], beyond x_main_end).
+
+    - Increasing Risk: same gradient as on the main axis ([safe_x, risk_x],
+      clipped), if the UB lies beyond the break.
+    - High-Risk: if the UB is before the break (the main axis already ends on
+      the end color of the High-Risk gradient), the gradient continues from
+      that color towards a darker purple; if the UB is beyond the break, the
+      full High-Risk gradient starts at the UB.
+    The main axis is unchanged, so that a given nL keeps the same color on
+    every row."""
     if x_max <= x_min:
         return
-    ax.axvspan(x_min, x_max, ymin=0.10, ymax=0.90, facecolor="#4f256d", edgecolor="none", zorder=0)
+    safe_x = config.SAFE_BOUNDARY_REL if safe_x is None else safe_x
+    risk_x = config.RISK_TRANSITION_REL if risk_x is None else max(risk_x, safe_x)
+    if risk_x > x_min:
+        _draw_gradient_segment(ax, safe_x, risk_x, ["#f5dd3d", "#eb8f1e"])
+    if risk_x >= x_max:
+        return
+    if risk_x > x_main_end:
+        _draw_gradient_segment(ax, risk_x, x_max, HIGH_RISK_COLORS)
+    else:
+        _draw_gradient_segment(ax, x_min, x_max, HIGH_RISK_BEYOND_BREAK_COLORS)
 
 
 def _set_break_axis_ticks(ax_ext):
@@ -162,32 +177,16 @@ def _plot_sensitivity_segment(ax, x_min, x_max, y_pos, color, cap_half_height=0.
                 linewidth=linewidth, zorder=zorder)
 
 
-def _draw_lp_title_above(ax, name, unit_text, ceiling, gap_below_bar, gap_above_bar, fontsize=13):
+def _draw_lp_title_above(ax, name, gap_below_bar, fontsize=13):
     """Display the name of the LP above the bar, left-aligned on the start of
-    the axis (x=0), instead of the usual label in the left margin. The unit, if
-    any, is always displayed on a second line below the name.
-
-    The two lines are anchored independently, so that each gap can be tuned
-    without affecting the other:
-      - the unit (or the name, if there is no unit) is anchored by its bottom
-        (va="bottom") at `gap_below_bar` above the bar it names (y=1.0 = top
-        of this bar) -- "stuck" to the bar by default;
-      - the name is anchored by its top (va="top") at `gap_above_bar` below
-        `ceiling`, the upper limit available for this row (typically the
-        bottom of the bar above -- see caller).
-    """
-    if unit_text:
-        ax.text(0.0, 1.0 + gap_below_bar, f"({unit_text})", transform=ax.transAxes, ha="left", va="bottom",
-                fontsize=fontsize, color="#4a4a4a", clip_on=False)
-        ax.text(0.0, ceiling - gap_above_bar, name, transform=ax.transAxes, ha="left", va="top",
-                fontsize=fontsize, fontweight="bold", clip_on=False)
-    else:
-        ax.text(0.0, 1.0 + gap_below_bar, name, transform=ax.transAxes, ha="left", va="bottom",
-                fontsize=fontsize, fontweight="bold", clip_on=False)
+    the axis (x=0), anchored by its bottom (va="bottom") at `gap_below_bar`
+    above the bar it names (y=1.0 = top of this bar)."""
+    ax.text(0.0, 1.0 + gap_below_bar, name, transform=ax.transAxes, ha="left", va="bottom",
+            fontsize=fontsize, fontweight="bold", clip_on=False)
 
 
 # ============================================================================
-# FIGURE: create_overshoot_safe_space_figure_by_region
+# FIGURE: create_multi_regions_synthesis
 # ============================================================================
 
 # Size of the scenario bubbles (area, in points^2 -- `s` parameter of
@@ -304,26 +303,25 @@ def _plot_region_bubble(ax, rel_x, y_pos, style, hatched=False, hatch_color=None
             sc.set_edgecolor(hatch_color)
 
 
-def create_overshoot_safe_space_figure_by_region(
-    all_scenarios_data, thresholds_df, shares_df, scenario_names,
+def create_multi_regions_synthesis(
+    all_scenarios_data, boundaries_df, shares_df, scenario_names,
     unit_row=config.UNIT_ROW_ABS,
     ub_color="#bc270a", x_main_max=8.0, display_bounds=True,
-    show_pba=False, show_value_overshoot=False, show_value_bounds=True,
-    title_above_bar=False,
-    title_gap_below_bar=0.01, title_gap_above_bar=0.01,
+    show_pba=False, show_value_overshoot=False,    title_gap_below_bar=0.01, title_gap_above_bar=0.01,
     title="Overshoot relative to the Safe Operating Space",
     sharing_principle="EPC", sensitivity=False,
     region_codes=None, default_region_code=config.DEFAULT_REGION_CODE,
     pop_df=None, scale_UB=False,
+    excel_path=None,
 ):
     """Multi-LP Overshoot / Safe Operating Space figure, in absolute values and
     with a budget specific to each country/region. X axis relative to the
-    budget of each scenario (1L = Safe Limit).
+    budget of each scenario (1L = Safe Boundary).
 
     Nothing is divided by the population: neither the footprints (to be given
     in absolute values, see processing.process_scenario_absolute), nor the
-    budgets. The world budgets remain those of thresholds.xlsx/sheet "All"
-    ("Lower safe bound"/"Safe limit"/"Upper safe bound", converted by "Unit
+    budgets. The world budgets remain those of boundaries_values.xlsx/sheet "All"
+    ("Lower Safe Boundary"/"Safe Boundary"/"High-Risk Boundary", converted by "Unit
     conversion budget"), and the descent to the national level is done by
     multiplying them by the share of the country read in
     budget_shares.xlsx/sheet "Budget_shares_regions":
@@ -345,14 +343,14 @@ def create_overshoot_safe_space_figure_by_region(
 
     Consequence: the 1L abscissa is no longer the same budget in absolute value
     for all the scenarios (each bubble is positioned relative to the budget of
-    its own country), whereas the Lower/Upper Safe Bound lines remain common to
+    its own country), whereas the Lower/High-Risk Boundary lines remain common to
     the whole row -- their relative position (UB/LB) does not depend on the
     share, which cancels out in the ratio.
 
     Args:
         shares_df: "Budget_shares_regions" sheet of budget_shares.xlsx
             (io.load_budget_shares_df).
-        unit_row: display unit row of thresholds_df -- config.UNIT_ROW_ABS by
+        unit_row: display unit row of boundaries_df -- config.UNIT_ROW_ABS by
             default, the figure being in absolute values.
         sharing_principle: "EPC" (equal per capita) or "CTR" (capability to
             reduce). The reference share, which positions the bubbles, is read
@@ -360,8 +358,8 @@ def create_overshoot_safe_space_figure_by_region(
             EPC 2019" ("UN – EPC 2019-2100" for GHG emissions) -- see
             config.region_figure_epc_ref_pattern. The sensitivity bounds remain
             "<principle> min/max". The world budgets of GHG emissions are read
-            in the "GHG emissions (2019)" column of thresholds.xlsx
-            (config.region_figure_threshold_column).
+            in the "GHG emissions (2019)" column of boundaries_values.xlsx
+            (config.region_figure_boundary_column).
         sensitivity: if True, each bubble gets a horizontal segment (confidence
             interval, with small vertical ticks at the ends) connecting the two
             overshoot levels obtained with the budgets of the "<principle> min"
@@ -381,18 +379,18 @@ def create_overshoot_safe_space_figure_by_region(
         scale_UB: if False (default), common scale for all the rows, in
             multiples of the lower limit (1L, 2L, 3L...). If True, the scale of
             each row is specific to its indicator, piecewise linear:
-            unchanged between 0 and the Safe Limit (1L), then stretched or
-            compressed so that the Upper Safe Bound falls exactly on the
+            unchanged between 0 and the Safe Boundary (1L), then stretched or
+            compressed so that the High-Risk Boundary falls exactly on the
             "Increasing Risk" / "High-Risk Zone" boundary (formerly 2L); beyond
-            the UB, the slope of the [Safe Limit, UB] segment is extended. The
-            Safe Limit and Upper Safe Bound lines are thus vertically aligned
+            the UB, the slope of the [Safe Boundary, UB] segment is extended. The
+            Safe Boundary and High-Risk Boundary lines are thus vertically aligned
             from one row to another, and all the abscissas of the row (bubbles,
-            sensitivity segments, Lower Safe Bound) follow this scale. The "nL"
+            sensitivity segments, Lower Safe Boundary) follow this scale. The "nL"
             ticks (main axis and break axis), which no longer have a common
             meaning, are hidden. No axis break: the main axis takes the full
             width, up to x_main_max, widened if needed (same bound for all the
             rows) to contain the rightmost bubble of the figure. A row without
-            Upper Safe Bound (or with UB <= Safe Limit) keeps the 1L scale.
+            High-Risk Boundary (or with UB <= Safe Boundary) keeps the 1L scale.
         show_value_overshoot: if True, each bar gets its own "nL" axis right
             above it, instead of the single axis at the top of the figure (the
             title of the bar is shifted above this axis). With scale_UB=True,
@@ -407,22 +405,20 @@ def create_overshoot_safe_space_figure_by_region(
         default_region_code: code used for a scenario whose name contains no
             EXIOBASE code ("FR" by default: Base_year, TREND, Tech_NZE... are
             France scenarios).
-        display_bounds: True (default) displays the 3 lines (Lower Safe Bound,
-            Safe Limit, Upper Safe Bound); False only displays Safe Limit.
+        display_bounds: True (default) displays the 3 lines (Lower Safe Boundary,
+            Safe Boundary, High-Risk Boundary); False only displays Safe Boundary.
         show_pba: if True, also draws a hatched bubble from the "pba" key of
             each payload (production-based accounting).
-        show_value_bounds: if True (default), displays the unit of the LP (and
-            the Safe Limit value, see the note below).
-        title_above_bar: if True, LP name + unit displayed above each bar,
-            left-aligned (unit on a second line), instead of in the left margin.
-        title_gap_below_bar, title_gap_above_bar: (title_above_bar=True only)
-            gaps, as a fraction of bar height, between the title and the bar it
+        The LP name is displayed above each bar, left-aligned (no unit, no
+            Safe Boundary value).
+        title_gap_below_bar, title_gap_above_bar: gaps, as a fraction of bar height, between the title and the bar it
             names / the bar above.
-
-    Note: show_value_bounds still controls the display of the unit of the LP,
-    but the absolute value above the Safe Limit line is only displayed if all
-    the scenarios share the same budget (a single country on screen) --
-    otherwise there is no single value to annotate.
+        excel_path: if given, Excel workbook of the plotted data (see
+            figure_export), "Overshoot" sheet: one row per indicator x
+            scenario x accounting with the footprint, the budgets of the
+            region (Lower Safe Boundary, Safe Boundary, High-Risk Boundary), the
+            overshoot of the Safe Boundary (actual value, not rescaled by
+            scale_UB) and the sensitivity bounds.
 
     Returns:
         matplotlib.figure.Figure
@@ -442,6 +438,30 @@ def create_overshoot_safe_space_figure_by_region(
         for name in scenario_names
     }
 
+    # Display order of the scenarios (top to bottom): FR, EU27, W, then the other
+    # regions in alphabetical order of their displayed name. Stable sort: the
+    # scenarios sharing a region (Base_year, TREND... -> FR) keep their order.
+    def _region_label(code):
+        if str(code).upper() == config.WORLD_REGION_CODE:
+            return "World"
+        if str(code).upper() == "EU27":
+            return "EU27"
+        if (config.BUDGET_SHARE_REGION_COLUMN in shares_df.columns
+                and code in shares_df.index):
+            return str(shares_df.loc[code, config.BUDGET_SHARE_REGION_COLUMN])
+        return str(code)
+
+    _fixed_order = {config.DEFAULT_REGION_CODE: 0, "EU27": 1, config.WORLD_REGION_CODE: 2}
+    # all_scenarios_data is aligned by position on scenario_names: sort both together.
+    order = sorted(
+        range(len(scenario_names)),
+        key=lambda i: (_fixed_order.get(str(codes[scenario_names[i]]).upper(), 3),
+                       _region_label(codes[scenario_names[i]]).lower()
+                       if str(codes[scenario_names[i]]).upper() not in _fixed_order else ""),
+    )
+    scenario_names = [scenario_names[i] for i in order]
+    all_scenarios_data = [all_scenarios_data[i] for i in order]
+
     # Reference EPC read in the UN columns ("UN – EPC 2019", or "UN – EPC
     # 2019-2100" for GHG): see config.region_figure_epc_ref_pattern.
     if sharing_principle == "EPC":
@@ -454,15 +474,16 @@ def create_overshoot_safe_space_figure_by_region(
                     f"io.load_budget_shares_df."
                 )
 
-    def budget_of(indicator_name, scenario_name, threshold_kind="lb", variant="ref"):
+    def budget_of(indicator_name, scenario_name, boundary_kind="lb", variant="ref"):
         column_pattern = (config.region_figure_epc_ref_pattern(indicator_name)
                           if sharing_principle == "EPC" and variant == "ref" else None)
-        # Column of thresholds.xlsx holding the budgets (e.g. GHG emissions ->
-        # GHG emissions (2019)): see config.region_figure_threshold_column.
-        threshold_column = config.region_figure_threshold_column(indicator_name)
+        # Column of boundaries_values.xlsx holding the budgets (e.g. GHG emissions ->
+        # GHG emissions (2019)), or the indicator column if the sheet lacks it
+        # ("Agri"): see config.region_figure_boundary_column.
+        boundary_column = config.region_figure_boundary_column(indicator_name, boundaries_df)
         budget = processing.compute_region_budget(
-            thresholds_df, shares_df, threshold_column, codes[scenario_name],
-            sharing_principle, variant=variant, threshold_kind=threshold_kind,
+            boundaries_df, shares_df, boundary_column, codes[scenario_name],
+            sharing_principle, variant=variant, boundary_kind=boundary_kind,
             column_pattern=column_pattern,
         )
         # W has no min/max shares: per-capita sensitivity, by varying the
@@ -470,8 +491,8 @@ def create_overshoot_safe_space_figure_by_region(
         if (budget is None and variant != "ref" and pop_df is not None
                 and str(codes[scenario_name]).upper() == config.WORLD_REGION_CODE):
             period_budgets = [
-                processing.compute_world_period_budget(thresholds_df, pop_df, threshold_column, period,
-                                                       threshold_kind=threshold_kind)
+                processing.compute_world_period_budget(boundaries_df, pop_df, boundary_column, period,
+                                                       boundary_kind=boundary_kind)
                 for period in config.WORLD_SENSITIVITY_POPULATION_PERIODS
             ]
             period_budgets = [b for b in period_budgets if b]
@@ -498,7 +519,7 @@ def create_overshoot_safe_space_figure_by_region(
     # is large enough to require more (MIN_ROW_HEIGHT_PER_SCENARIO_REGION),
     # capped at MAX_ROW_HEIGHT_FACTOR_REGION -- see their comments. No effect on
     # the figures with 2-4 scenarios.
-    default_row_height_factor = 1.35 if title_above_bar else 1.2
+    default_row_height_factor = 1.35
     row_height_factor = max(
         default_row_height_factor,
         min(MIN_ROW_HEIGHT_PER_SCENARIO_REGION * len(scenario_names), MAX_ROW_HEIGHT_FACTOR_REGION),
@@ -507,8 +528,7 @@ def create_overshoot_safe_space_figure_by_region(
     # the two requested gaps, whatever their settings (+ the "nL" axis
     # specific to each bar if show_value_overshoot).
     value_axis_extra = VALUE_AXIS_BLOCK_HEIGHT if show_value_overshoot else 0.0
-    hspace = ((title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT) if title_above_bar
-              else 0.12) + value_axis_extra
+    hspace = title_gap_below_bar + title_gap_above_bar + TITLE_BLOCK_HEIGHT + value_axis_extra
     fig = plt.figure(figsize=(18, max(8, row_height_factor * n_lp + 1.8)))
     gs = fig.add_gridspec(n_lp, 2, width_ratios=[7.0, 3.0], hspace=hspace, wspace=0.02)
 
@@ -522,41 +542,41 @@ def create_overshoot_safe_space_figure_by_region(
         if all(b is None for b in budgets.values()):
             return None
 
-        # The Lower/Upper Safe Bound lines are common to the row: their
+        # The Lower/High-Risk Boundary lines are common to the row: their
         # relative position (World_budget_LOWER/UB / World_budget_LB) is the
         # same for all the countries, the share cancelling out in the ratio.
         # They are therefore computed with the budget of the reference scenario.
         ref_name = next(name for name in scenario_names if budgets[name])
         ref_lb = budgets[ref_name]
-        lower_val = budget_of(indicator_name, ref_name, threshold_kind="lower")
-        ub_val = budget_of(indicator_name, ref_name, threshold_kind="ub")
+        lower_val = budget_of(indicator_name, ref_name, boundary_kind="lower")
+        ub_val = budget_of(indicator_name, ref_name, boundary_kind="ub")
         lower_rel = (lower_val / ref_lb) if lower_val is not None else None
         ub_rel = (ub_val / ref_lb) if ub_val is not None else None
 
         # scale_UB=True: scale specific to the row, piecewise linear, which
-        # keeps the Safe Limit (1L) on config.SAFE_LIMIT_REL and brings the
-        # Upper Safe Bound to config.RISK_TRANSITION_REL -- the two lines are
+        # keeps the Safe Boundary (1L) on config.SAFE_BOUNDARY_REL and brings the
+        # High-Risk Boundary to config.RISK_TRANSITION_REL -- the two lines are
         # therefore vertically aligned from one row to another. Below 1L, the
         # scale is unchanged; beyond, the slope of the [1L, UB] segment is
         # extended. Applied to all the abscissas of the row.
         ub_slope = None
         if scale_UB and ub_rel is not None and np.isfinite(ub_rel) and ub_rel > 1:
-            ub_slope = (config.RISK_TRANSITION_REL - config.SAFE_LIMIT_REL) / (ub_rel - 1)
+            ub_slope = (config.RISK_TRANSITION_REL - config.SAFE_BOUNDARY_REL) / (ub_rel - 1)
 
         def scaled(x):
             if x is None or ub_slope is None:
                 return x
             if x <= 1:
-                return x * config.SAFE_LIMIT_REL
-            return config.SAFE_LIMIT_REL + (x - 1) * ub_slope
+                return x * config.SAFE_BOUNDARY_REL
+            return config.SAFE_BOUNDARY_REL + (x - 1) * ub_slope
 
         def unscaled(x):
             """Inverse of scaled (displayed abscissa -> actual value in nL)."""
             if x is None or ub_slope is None:
                 return x
-            if x <= config.SAFE_LIMIT_REL:
-                return x / config.SAFE_LIMIT_REL
-            return 1 + (x - config.SAFE_LIMIT_REL) / ub_slope
+            if x <= config.SAFE_BOUNDARY_REL:
+                return x / config.SAFE_BOUNDARY_REL
+            return 1 + (x - config.SAFE_BOUNDARY_REL) / ub_slope
 
         # Relative positions (CBA, and PBA if requested) by scenario
         points = []
@@ -576,6 +596,7 @@ def create_overshoot_safe_space_figure_by_region(
 
             rel_cba_min = rel_cba_max = None
             rel_pba_min = rel_pba_max = None
+            budget_min = budget_max = None
             if sensitivity:
                 budget_min = budget_of(indicator_name, sname, variant="min")
                 budget_max = budget_of(indicator_name, sname, variant="max")
@@ -589,6 +610,11 @@ def create_overshoot_safe_space_figure_by_region(
                 "abs_pba": abs_pba, "rel_pba": scaled(rel_pba),
                 "rel_cba_min": scaled(rel_cba_min), "rel_cba_max": scaled(rel_cba_max),
                 "rel_pba_min": scaled(rel_pba_min), "rel_pba_max": scaled(rel_pba_max),
+                # Actual overshoot levels (not rescaled by scale_UB) and
+                # sensitivity budgets, for the Excel export (excel_path)
+                "raw": {"CBA": (abs_cba, rel_cba, rel_cba_min, rel_cba_max),
+                        "PBA": (abs_pba, rel_pba, rel_pba_min, rel_pba_max)},
+                "budget_min": budget_min, "budget_max": budget_max,
             })
 
         return {"budgets": budgets, "ref_lb": ref_lb, "lower_rel": lower_rel, "ub_rel": ub_rel,
@@ -597,7 +623,7 @@ def create_overshoot_safe_space_figure_by_region(
     rows = {name: compute_row(name) for name in indicators}
 
     # scale_UB=True: no axis break. The main axis takes the full width, and its
-    # right bound is common to all the rows (to keep the Safe Limit/UB lines
+    # right bound is common to all the rows (to keep the Safe Boundary/UB lines
     # aligned): x_main_max, widened if needed to contain the rightmost bubble
     # (or end of sensitivity segment) of the figure.
     x_axis_max = x_main_max
@@ -621,8 +647,6 @@ def create_overshoot_safe_space_figure_by_region(
         if row_idx == 0:
             top_main_ax = ax
 
-        unit_text = _get_lp_unit(thresholds_df, indicator_name, unit_row) if show_value_bounds else ""
-
         row = rows[indicator_name]
         if row is None:
             ax.text(0.5, 0.5, f"{indicator_name}: missing lower limit", transform=ax.transAxes,
@@ -644,18 +668,22 @@ def create_overshoot_safe_space_figure_by_region(
 
         ax.set_xlim(0, x_axis_max)
         ax.set_ylim(0, 1)
-        _draw_lp_background(ax, 0, x_axis_max)
-
+        # Zones bounded by the limits of the row: Safe Operating Space up to the
+        # Safe Boundary, Increasing Risk up to the High-Risk Boundary, High-Risk beyond.
+        _ub_x = scaled(ub_rel) if (ub_rel is not None and np.isfinite(ub_rel) and ub_rel > 1) else None
         if use_break:
             x2_min = min(overflow) * 0.995
             x2_max = max(overflow) * 1.02
             if (x2_max - x2_min) < 0.5:
                 mid = 0.5 * (x2_min + x2_max)
                 x2_min, x2_max = mid - 0.25, mid + 0.25
+        _draw_lp_background(ax, x_axis_max, safe_x=scaled(1.0), risk_x=_ub_x)
 
+        if use_break:
             ax_ext.set_xlim(x2_min, x2_max)
             ax_ext.set_ylim(0, 1)
-            _draw_above_break_uniform(ax_ext, x2_min, x2_max)
+            _draw_break_background(ax_ext, x2_min, x2_max, x_axis_max,
+                                   safe_x=scaled(1.0), risk_x=_ub_x)
             _set_break_axis_ticks(ax_ext)
 
             d = 0.012
@@ -671,22 +699,18 @@ def create_overshoot_safe_space_figure_by_region(
         lower_rel = scaled(lower_rel)
         ub_rel = scaled(ub_rel)
         safe_x = scaled(1.0)
-        distinct_budgets = {round(b, 12) for b in budgets.values() if b}
-        lb_label = _fmt_abs(ref_lb) if (show_value_bounds and len(distinct_budgets) == 1) else None
 
-        # Limit lines + values (independent of the background gradient): Safe
-        # Limit (green, historical threshold) always displayed, value visible
-        # only if a single budget is shared by all the scenarios; Lower/Upper
-        # Safe Bound (light green/red) only if display_bounds=True, never their
-        # value.
+        # Limit lines (independent of the background gradient): Safe Limit
+        # (green, historical boundary) always displayed; Lower/Upper Safe Bound
+        # (light green/red) only if display_bounds=True. No values displayed.
         if display_bounds and lower_rel is not None and lower_rel >= 0:
-            ax.axvline(lower_rel, ymin=0.10, ymax=0.90, color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3, zorder=3)
+            ax.axvline(lower_rel, ymin=0.10, ymax=0.90, color=config.LOWER_SAFE_BOUNDARY_COLOR, linewidth=3, zorder=3)
         ax.axvline(safe_x, ymin=0.10, ymax=0.90, color="#0d9a33", linewidth=3, zorder=3)
-        if lb_label is not None:
-            ax.text(safe_x, 0.93, lb_label, color="#0d9a33", fontsize=11, fontweight="bold",
-                    ha="center", va="bottom", zorder=5)
         if display_bounds and ub_rel is not None and ub_rel <= x_axis_max:
             ax.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
+        elif (display_bounds and use_break and ub_rel is not None
+              and ax_ext.get_xlim()[0] <= ub_rel <= ax_ext.get_xlim()[1]):
+            ax_ext.axvline(ub_rel, ymin=0.10, ymax=0.90, color=ub_color, linewidth=3, zorder=3)
 
         # CBA bubbles (solid) + PBA (hatched, if show_pba), with sensitivity
         # segment (sensitivity=True) drawn below each bubble.
@@ -719,24 +743,17 @@ def create_overshoot_safe_space_figure_by_region(
         yaxis_transform = ax.get_yaxis_transform()
         for sname, y_pos in scenario_to_y.items():
             style = scenario_style.get(sname, colors.REGION_CODE_FALLBACK)
-            code_text = str(codes.get(sname, sname))
+            # Region name from the "Region" column of budget_shares.xlsx
+            # ("France", "RoW Africa"...); W is named "World".
+            code_text = _region_label(codes.get(sname, sname))
             ax.text(-0.012, y_pos, code_text, transform=yaxis_transform, ha="right", va="center",
                     fontsize=11, fontweight="bold", color=style["face"], clip_on=False)
 
-        # LP name + unit: in the left margin (default), or above the bar
-        # (title_above_bar=True). `ceiling` (= 1.0 + hspace, the bottom of the
+        # LP name + unit above the bar. `ceiling` (= 1.0 + hspace, the bottom of the
         # bar above) is the same formula for all the rows, including the 1st:
         # hspace is sized (see above) to also leave room for the ticks of the
         # shared X axis above it.
-        if title_above_bar:
-            _draw_lp_title_above(ax, indicator_name, unit_text, 1.0 + hspace,
-                                  title_gap_below_bar + value_axis_extra, title_gap_above_bar)
-        else:
-            ax.text(-0.03, 0.57, indicator_name, transform=ax.transAxes, ha="right", va="center",
-                    fontsize=13, fontweight="bold")
-            if unit_text:
-                ax.text(-0.03, 0.39, f"({unit_text})", transform=ax.transAxes, ha="right", va="center",
-                        fontsize=13, color="#4a4a4a")
+        _draw_lp_title_above(ax, indicator_name, title_gap_below_bar + value_axis_extra)
 
         # Clean styling
         for axis in (ax, ax_ext):
@@ -783,33 +800,56 @@ def create_overshoot_safe_space_figure_by_region(
     # (scale_UB=True or show_value_overshoot=True: zone labels only -- no
     # common "nL" axis)
     if top_main_ax is not None:
-        top_spine_y = (1.0 + hspace + 0.03) if title_above_bar else 1.03
+        top_spine_y = 1.0 + hspace + 0.03
         if not scale_UB and not show_value_overshoot:
             top_main_ax.set_xticks(np.arange(1, int(x_main_max) + 1))
             top_main_ax.set_xticklabels([f"{i}L" for i in range(1, int(x_main_max) + 1)], fontsize=AXIS_TICK_LABEL_FONTSIZE, fontweight="bold")
             top_main_ax.spines["top"].set_position(("axes", top_spine_y))
             top_main_ax.tick_params(axis="x", pad=8, length=5, labelsize=AXIS_TICK_LABEL_FONTSIZE)
         if show_value_overshoot:
-            zone_label_y = (1.0 + hspace + 0.05) if title_above_bar else (1.0 + value_axis_extra + 0.05)
+            zone_label_y = 1.0 + hspace + 0.05
         else:
-            zone_label_y = (top_spine_y + 0.45) if title_above_bar else 1.44
-        for txt, color, x_pos in [
-            ("Safe Operating Space", "#0b7d3e", 0.00),
-            ("Increasing Risk", "#d47818", 0.20),
-            ("High-Risk Zone", "#7a1f54", 0.40),
-        ]:
-            top_main_ax.text(x_pos, zone_label_y, txt, transform=top_main_ax.transAxes, color=color,
-                              fontsize=11, fontweight="bold", ha="left")
+            zone_label_y = top_spine_y + 0.45
+        # Each label starts at the beginning of its zone (x in data
+        # coordinates): 0, Safe Boundary (SAFE_BOUNDARY_REL), High-Risk Boundary
+        # (RISK_TRANSITION_REL -- where the UB falls on every row with scale_UB).
+        # Constraints: "Safe Operating Space" ends just before 1L, "Increasing
+        # Risk" starts just after 1L, "High-Risk Zone" starts just after the
+        # UB (RISK_TRANSITION_REL) -- and after the end of "Increasing Risk"
+        # if needed, so that no label overlaps.
+        # Positions depend on the size of the axes in pixels: recomputed after
+        # tight_layout (see _place_zone_labels below).
+        text_kw = dict(transform=top_main_ax.get_xaxis_transform(), fontsize=11,
+                       fontweight="bold", clip_on=False)
+        zone_labels = (
+            top_main_ax.text(0, zone_label_y, "Safe Operating Space", color="#0b7d3e", ha="right", **text_kw),
+            top_main_ax.text(0, zone_label_y, "Increasing Risk", color="#d47818", ha="left", **text_kw),
+            top_main_ax.text(0, zone_label_y, "High-Risk Zone", color="#7a1f54", ha="left", **text_kw),
+        )
+
+        def _place_zone_labels():
+            safe_txt, increasing_txt, high_txt = zone_labels
+            margin_px = 6 * fig.dpi / 72  # small gap (6 pt) to a limit / another label
+            to_px = top_main_ax.transData.transform
+            to_data = top_main_ax.transData.inverted().transform
+            safe_px = to_px((config.SAFE_BOUNDARY_REL, 0))[0]
+            safe_txt.set_x(to_data((safe_px - margin_px, 0))[0])
+            increasing_txt.set_x(to_data((safe_px + margin_px, 0))[0])
+            increasing_end_px = increasing_txt.get_window_extent(renderer=fig.canvas.get_renderer()).x1
+            high_px = max(to_px((config.RISK_TRANSITION_REL, 0))[0], increasing_end_px) + margin_px
+            high_txt.set_x(to_data((high_px, 0))[0])
+
+        _place_zone_labels()
 
     # Legend: limits + type of accounting (show_pba) + sensitivity
     # (sensitivity) -- no entry per scenario, each scenario is identified by
     # its code to the left of each bar (see above).
-    limit_handles = [Line2D([0], [0], color="#0d9a33", linewidth=3.5, label="Safe Limit")]
+    limit_handles = [Line2D([0], [0], color="#0d9a33", linewidth=3.5, label="Safe Boundary")]
     if display_bounds:
         limit_handles = [
-            Line2D([0], [0], color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3.5, label="Lower Safe Bound"),
+            Line2D([0], [0], color=config.LOWER_SAFE_BOUNDARY_COLOR, linewidth=3.5, label="Lower Safe Boundary"),
             *limit_handles,
-            Line2D([0], [0], color=ub_color, linewidth=3.5, label="Upper Safe Bound"),
+            Line2D([0], [0], color=ub_color, linewidth=3.5, label="High-Risk Boundary"),
         ]
     legend_handles = list(limit_handles)
     if show_pba:
@@ -824,18 +864,73 @@ def create_overshoot_safe_space_figure_by_region(
                    label="sensitivity to allocation principles")
         )
 
-    fig.legend(handles=legend_handles, loc="lower center", ncol=min(8, len(legend_handles)),
-               bbox_to_anchor=(0.5, -0.01), frameon=False, fontsize=13)
-    fig.suptitle(title, fontsize=17, fontweight="bold", y=0.995)
-    left_rect = 0.03 if title_above_bar else 0.10
-    top_rect = 0.90 if title_above_bar else 0.93
-    plt.tight_layout(rect=[left_rect, 0.06, 0.98, top_rect])
+    # Title and legend flush against the figure edges; the layout rectangle is
+    # then deduced from their measured height, to leave no blank space.
+    legend = fig.legend(handles=legend_handles, loc="lower center", ncol=min(8, len(legend_handles)),
+                        bbox_to_anchor=(0.5, 0.0), frameon=False, fontsize=13,
+                        borderaxespad=0.1)
+    suptitle = fig.suptitle(title, fontsize=17, fontweight="bold", y=1.0, va="top")
+    left_rect = 0.03
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    fig_h_px = fig.bbox.height
+    bottom_rect = legend.get_window_extent(renderer).height / fig_h_px
+    top_rect = 1.0 - suptitle.get_window_extent(renderer).height / fig_h_px
+    # pad=0.1 (default 1.08): tight_layout's outer margin, which left a blank
+    # between the title/legend and the plot; h_pad/w_pad keep the inner spacing.
+    plt.tight_layout(pad=0.1, h_pad=1.08, w_pad=1.08,
+                     rect=[left_rect, bottom_rect, 0.98, top_rect])
     if top_main_ax is not None:
         # tight_layout() regenerates the labels of the main axis (spine moved
         # higher) and makes them lose the bold applied via set_xticklabels; it
         # is therefore reapplied at the very end.
         plt.setp(top_main_ax.get_xticklabels(), fontweight="bold")
+        _place_zone_labels()
     for axis in value_axes:
         plt.setp(axis.get_xticklabels(), fontweight="bold")
+
+    if excel_path is not None:
+        overshoot_rows = []
+        # Same order as the rows of the figure (top to bottom)
+        for indicator_name in indicators:
+            row = rows[indicator_name]
+            if row is None:
+                continue
+            unit = figure_export.indicator_unit(boundaries_df, indicator_name, unit_row)
+            for p in row["points"]:
+                sname = p["sname"]
+                budgets_row = {
+                    "Lower Safe Boundary": budget_of(indicator_name, sname, boundary_kind="lower"),
+                    "Safe Boundary": row["budgets"][sname],
+                    "High-Risk Boundary": budget_of(indicator_name, sname, boundary_kind="ub"),
+                }
+                for accounting, (value, rel, rel_min, rel_max) in p["raw"].items():
+                    if value is None:
+                        continue
+                    overshoot_rows.append({
+                        "Indicator": indicator_name, "Unit": unit, "Scenario": sname,
+                        "Region code": codes[sname], "Accounting": accounting,
+                        "Footprint": figure_export.clean_value(value),
+                        **{label: figure_export.clean_value(b) for label, b in budgets_row.items()},
+                        "Overshoot of the Safe Boundary (L)": figure_export.clean_value(rel),
+                        "Sensitivity: min share budget": figure_export.clean_value(p["budget_min"]),
+                        "Sensitivity: max share budget": figure_export.clean_value(p["budget_max"]),
+                        "Sensitivity: overshoot min (L)": figure_export.clean_value(rel_min),
+                        "Sensitivity: overshoot max (L)": figure_export.clean_value(rel_max),
+                    })
+        epc_note = ("UN – EPC 2019 (UN – EPC 2019-2100 and GHG emissions (2019) budgets for GHG emissions)"
+                    if sharing_principle == "EPC" else "reference share")
+        figure_export.write_figure_excel(excel_path, {"Overshoot": overshoot_rows}, about={
+            "Figure": title,
+            "Generated by": "planefr_lib.plot_overshoot.create_multi_regions_synthesis",
+            "Content": "Footprint of each country/region (absolute values) compared with its own budget: "
+                       "world budget x share of the region; overshoot = footprint / Safe Boundary (1L).",
+            "Accounting": "CBA = consumption-based" + (", PBA = production-based" if show_pba else ""),
+            "Sharing principle": f"{sharing_principle} ({epc_note}, budget_shares.xlsx)",
+            "Sensitivity": ("Budgets with the min/max shares of the principle; World: per-capita limit over "
+                            "the population periods " + ", ".join(config.WORLD_SENSITIVITY_POPULATION_PERIODS)
+                            if sensitivity else None),
+            "Unit": "Unit column (\"Figures unit\" of boundaries_values.xlsx)",
+        })
 
     return fig

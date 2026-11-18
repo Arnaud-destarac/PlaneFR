@@ -98,7 +98,7 @@ def scenario_style_map(scenario_names):
 
 
 # Colors by EXIOBASE region code (by-region figure,
-# plot_overshoot.create_overshoot_safe_space_figure_by_region): "FR" reuses the
+# plot_overshoot.create_multi_regions_synthesis): "FR" reuses the
 # "2019" color of scenario_style_map, "EU27"/"W" their dedicated colors above.
 REGION_CODE_COLORS = {
     "W": {"face": "#1f791f", "edge": "#1f791f"},

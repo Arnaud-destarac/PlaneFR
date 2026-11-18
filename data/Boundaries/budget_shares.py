@@ -105,21 +105,26 @@ from openpyxl.utils import get_column_letter
 # ─────────────────────────────── Configuration ────────────────────────────────
 
 DATA = Path(__file__).resolve().parent
+INPUT_DATA = DATA / "input_data"
 SRC = {
-    "gdp_wb": DATA / "Budget share" / "GDP PPP BM.csv",
-    "pop_wb": DATA / "Budget share" / "Population BM.csv",
-    "gdp_ssp": DATA / "Budget share" / "GDP PPP SSPs.csv",
-    "pop_ssp": DATA / "Budget share" / "Population SSPs.csv",
-    "pop_un": DATA / "Budget share" / "Population ONU.xlsx"
+    "gdp_wb": INPUT_DATA / "GDP PPP BM.csv",
+    "pop_wb": INPUT_DATA / "Population BM.csv",
+    "gdp_ssp": INPUT_DATA / "GDP PPP SSPs.csv",
+    "pop_ssp": INPUT_DATA / "Population SSPs.csv",
+    "pop_un": INPUT_DATA / "Population ONU.xlsx"
 }
 
 # Sheet names. SHEET_VARIANTS and SHEET_POPULATION are referenced by cell in
-# thresholds.xlsx (external links "[1]Budget_shares_variants!$E$15",
+# boundaries_values.xlsx (external links "[1]Budget_shares_variants!$E$15",
 # "[1]Population!$C$15"...): do not rename them nor move their columns/rows
 # without updating those formulas.
 SHEET_REGIONS = "Budget_shares_regions"
 SHEET_VARIANTS = "Budget_shares_variants"
 SHEET_POPULATION = "Population"
+# Taiwan: EXIOBASE region and ISO3 code in the UN data. Missing from the World
+# Bank data (no share), but its UN population is written in SHEET_POPULATION.
+TAIWAN_REGION = "TW"
+TAIWAN_UN_CODE = "TWN"
 SHEET_DIAGNOSTICS = "Country_diagnostics"
 
 
@@ -433,6 +438,12 @@ def compute_all(verbose: bool = True) -> dict:
         members = [c for c in included if (c in eu27 if g == EU27_LABEL[0] else region[c] == g)]
         reg_un[g] = [sum(epc_un[c][p] for c in members) for p in range(len(UN_PP))]
         reg_pop[g] = [sum(pop_mean[c][p] for c in members) for p in range(len(POP_PP))]
+    # Taiwan is missing from the World Bank data, hence from `included` (no
+    # share can be computed), but the UN gives its population: the Population
+    # sheet takes it, so that the TW row is not zero (per-capita footprints of
+    # 2019_TW) and the World total counts it.
+    reg_pop[TAIWAN_REGION] = [statistics.fmean(pop_un[TAIWAN_UN_CODE][y] for y in range(a, b + 1))
+                              for _, a, b in POP_PP]
     for k in SSPS:
         for g, _ in REGION_LABELS:
             members = [c for c in included if region[c] == g]
@@ -551,7 +562,7 @@ def write_workbook(res: dict, out: Path) -> Path:
 
     # World row (W): totals written as values, not as =SUM() formulas: openpyxl
     # does not compute formulas, so they would have no cached value and would be
-    # read as empty by pandas and by the external links of thresholds.xlsx.
+    # read as empty by pandas and by the external links of boundaries_values.xlsx.
     total_row = 5 + len(REGION_LABELS)
     ws.cell(total_row, 1, WORLD_LABEL[0]).font = _font(bold=True)  # World code, read by the by-region figure
     ws.cell(total_row, 2, WORLD_LABEL[1]).font = _font(bold=True)
@@ -643,7 +654,8 @@ def write_workbook(res: dict, out: Path) -> Path:
     wp["A1"] = "UN population by EXIOBASE region (thousands, mean over the period)"
     wp["A1"].font = Font(name="Arial", size=13, bold=True, color=DARK)
     wp["A2"] = ("World Population Prospects 2024: estimates up to 2023, medium variant from 2024. Sum over the "
-                "economies included in the share calculations. Columns C-E: populations of the \"UN – EPC\" "
+                "economies included in the share calculations, plus Taiwan (TW, no World Bank data hence no "
+                "share, but its UN population is counted here and in the World total). Columns C-E: populations of the \"UN – EPC\" "
                 f"shares of {SHEET_VARIANTS}; next columns: other periods used by PlaneFR.")
     wp["A2"].font = _font(italic=True, color="595959")
     _head(wp, 4, 1, "EXIOBASE code")

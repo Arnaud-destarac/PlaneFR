@@ -1,12 +1,16 @@
 """
-Stacked bars by indicator (create_stacked_bar_chart) and two multi-scenario
-synthesis figures that assemble them into a grid:
-  - create_synthesis_figure        : normalized in %, 1 grid with 2 columns
-  - create_synthesis_figure_by_lp  : absolute values, 3x3 grid by LP, with
-                                      thresholds (LP/DLS) and axis break if needed
+Figures of the footprint_decomposition notebook:
+  - create_footprint_decomposition_by_scenario : stacked bars in % by indicator,
+                                                 for one scenario
+  - create_footprint_decomposition             : absolute values, 3x3 grid by LP,
+                                                 with boundaries (LP/DLS) and
+                                                 axis break if needed
+
+Each one writes the data it plots into an Excel workbook if excel_path is
+given (see figure_export).
 
 Only used by the figures in absolute values (multi-scenario Synthesis): the
-threshold constants used are therefore fixed to the "_ABS" variant of
+boundary constants used are therefore fixed to the "_ABS" variant of
 planefr_lib.config rather than passed as parameters.
 """
 
@@ -18,16 +22,16 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
-from . import colors, config, io, processing
+from . import colors, config, figure_export, io, processing
 from .processing import DOMESTIC, IMPORTED
 
-CATEGORY_LEGEND_LABELS = {"F_Y": "Not allocated"}
+CATEGORY_LEGEND_LABELS = figure_export.CATEGORY_LABELS
 
 # sharing_principle="EPC": which UN column of budget_shares.xlsx to use.
-#   "region": like plot_overshoot.create_overshoot_safe_space_figure_by_region
+#   "region": like plot_overshoot.create_multi_regions_synthesis
 #             ("UN – EPC 2019", "UN – EPC 2019-2100" for GHG emissions, and
 #             GHG world budgets read in the "GHG emissions (2019)" column).
-#   "radial": like plot_radial_synthesis.create_radial_synthesis_figure
+#   "radial": like plot_radial_synthesis.create_radial_synthesis
 #             ("UN – EPC 2050", "UN – EPC 2019-2100" for GHG emissions).
 EPC_REFERENCES = ("region", "radial")
 
@@ -50,30 +54,30 @@ def _check_epc_columns(shares_df, epc_reference):
             )
 
 
-def _share_threshold(thresholds_df, shares_df, indicator_name, threshold_kind, sharing_principle,
-                     epc_reference, use_2019_thresholds=False):
+def _share_boundary(boundaries_df, shares_df, indicator_name, boundary_kind, sharing_principle,
+                     epc_reference, use_2019_boundaries=False):
     """France budget (absolute values) = world budget x share of the
     config.RADIAL_EPC_REGION_CODE row ("FR") of budget_shares.xlsx:
       - "EPC": UN EPC column chosen by epc_reference;
       - "CTR": "CTR share ref. ..." column.
 
-    use_2019_thresholds (epc_reference="region" only): True to read the world
-    budgets in the 2019 column of thresholds.xlsx when it exists (e.g. GHG
-    emissions -> "GHG emissions (2019)", see config.region_figure_threshold_column);
+    use_2019_boundaries (epc_reference="region" only): True to read the world
+    budgets in the 2019 column of boundaries_values.xlsx when it exists (e.g. GHG
+    emissions -> "GHG emissions (2019)", see config.region_figure_boundary_column);
     False to keep the column of the indicator ("GHG emissions").
     """
     if epc_reference == "region":
-        threshold_column = (config.region_figure_threshold_column(indicator_name)
-                            if use_2019_thresholds else indicator_name)
+        boundary_column = (config.region_figure_boundary_column(indicator_name, boundaries_df)
+                            if use_2019_boundaries else indicator_name)
         column_pattern = config.region_figure_epc_ref_pattern(indicator_name)
     else:
-        threshold_column = indicator_name
+        boundary_column = indicator_name
         column_pattern = config.radial_epc_pattern(indicator_name)
     if sharing_principle != "EPC":
         column_pattern = None  # reference share of the principle (e.g. "CTR share ref.")
     return processing.compute_region_budget(
-        thresholds_df, shares_df, threshold_column, config.RADIAL_EPC_REGION_CODE, sharing_principle,
-        threshold_kind=threshold_kind, column_pattern=column_pattern,
+        boundaries_df, shares_df, boundary_column, config.RADIAL_EPC_REGION_CODE, sharing_principle,
+        boundary_kind=boundary_kind, column_pattern=column_pattern,
     )
 
 
@@ -106,15 +110,62 @@ def _build_category_legend(categories):
     return handles, labels
 
 
-def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
+def _boundaries_note(sharing_principle, epc_reference):
+    """"About" text of the workbooks: how the France boundaries are obtained."""
+    if sharing_principle is None:
+        return "Read as is in boundaries_values.xlsx (France rows)."
+    if sharing_principle == "EPC":
+        columns = ("UN – EPC 2019, UN – EPC 2019-2100 for GHG emissions" if epc_reference == "region"
+                   else "UN – EPC 2050, UN – EPC 2019-2100 for GHG emissions")
+        return f"World budget (boundaries_values.xlsx) x share of France, EPC principle ({columns}, budget_shares.xlsx)."
+    return (f"World budget (boundaries_values.xlsx) x share of France, {sharing_principle} principle "
+            f"(reference share, budget_shares.xlsx).")
+
+
+def _safe_boundary_getter(boundaries_df, shares_df, sharing_principle, epc_reference, use_2019_boundaries):
+    """indicator_name -> lower boundary of France (Safe Boundary) of the stacked
+    bars: share-based (shares_df given) or read as is in boundaries_df."""
+    def safe_boundary_of(indicator_name):
+        if shares_df is not None:
+            return _share_boundary(boundaries_df, shares_df, indicator_name, "lb", sharing_principle,
+                                    epc_reference, use_2019_boundaries=use_2019_boundaries)
+        return processing.lookup_boundary(boundaries_df, config.BOUNDARY_LB_ABS, indicator_name)
+    return safe_boundary_of
+
+
+def _by_scenario_tables(scenario_name, data_by_indicator, boundaries_df, reference_data, safe_boundary_of):
+    """Rows of the "Footprint" and "Indicators" sheets of
+    create_footprint_decomposition_by_scenario for one scenario."""
+    indicator_rows = []
+    for indicator_name, data in data_by_indicator.items():
+        if data is None:
+            continue
+        total = processing.extract_value(data, "cba")
+        ref_total = (processing.extract_value(reference_data.get(indicator_name), "cba")
+                     if reference_data is not None else None)
+        safe_boundary = figure_export.clean_value(safe_boundary_of(indicator_name))
+        indicator_rows.append({
+            "Scenario": scenario_name,
+            "Indicator": indicator_name,
+            "Unit": figure_export.indicator_unit(boundaries_df, indicator_name),
+            "Total footprint (CBA)": total,
+            "Variation vs reference scenario (%)": figure_export.variation_pct(total, ref_total),
+            "Safe Boundary (France)": safe_boundary,
+            "Overshoot of the Safe Boundary (x)": figure_export.ratio(total, safe_boundary),
+        })
+    footprint = figure_export.footprint_rows(scenario_name, data_by_indicator, boundaries_df)
+    return footprint, indicator_rows
+
+
+def create_footprint_decomposition_by_scenario(data_by_indicator, boundaries_df, indicator_to_lp,
                               scenario_name="", reference_data=None, ax=None, show_legend=True,
                               group_by_category=True, sharing_principle=None,
-                              shares_df=None, epc_reference="region", use_2019_thresholds=None,
-                              show_values=True):
+                              shares_df=None, epc_reference="region", use_2019_boundaries=None,
+                              show_values=True, excel_path=None):
     """Stacked bars in % showing the LPs by indicator: dom (solid) + imp
     (hatched) stacked by consumption category. Annotates the absolute total,
     the variation relative to the reference scenario (if given), and the
-    overshoot of the lower threshold.
+    overshoot of the lower boundary.
 
     Args:
         data_by_indicator: {indicator_name: result of process_single_indicator_scenario}
@@ -127,37 +178,44 @@ def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
             for each category (cat1-dom, cat1-imp, cat2-dom, cat2-imp, ...);
             False to group by origin (all the dom categories, then all the imp
             categories)
-        sharing_principle: how the lower threshold (LB) of France is obtained:
-            - None (default): read as is in thresholds_df ("Equality" row);
-            - "EPC": world budget ("Safe limit") x UN EPC share of the "FR" row
+        sharing_principle: how the lower boundary (LB) of France is obtained:
+            - None (default): read as is in boundaries_df ("Equality" row);
+            - "EPC": world budget ("Safe Boundary") x UN EPC share of the "FR" row
               of budget_shares.xlsx, column chosen by epc_reference;
             - "CTR": world budget x "CTR share ref." share of the "FR" row.
         shares_df: budget_shares.xlsx (io.load_budget_shares_df) -- used for
             "EPC"/"CTR"; loaded automatically if None.
         epc_reference: "region" (default) = same limits as
-            create_overshoot_safe_space_figure_by_region ("UN – EPC 2019",
+            create_multi_regions_synthesis ("UN – EPC 2019",
             except GHG emissions: "UN – EPC 2019-2100" on the "GHG emissions
             (2019)" budget); "radial" = same limits as
-            create_radial_synthesis_figure ("UN – EPC 2050", except GHG
+            create_radial_synthesis ("UN – EPC 2050", except GHG
             emissions: "UN – EPC 2019-2100").
-        use_2019_thresholds: with epc_reference="region", True to take the
+        use_2019_boundaries: with epc_reference="region", True to take the
             world budgets of "GHG emissions (2019)" instead of "GHG emissions"
             (like the by-region figure, which only shows 2019 scenarios);
             False to keep "GHG emissions". None (default): True if
             scenario_name contains "2019" (e.g. "2019_FR"), False otherwise.
         show_values: True (default) to annotate the absolute total above each
-            bar and the overshoot level of the lower threshold just below the
+            bar and the overshoot level of the lower boundary just below the
             top of the bar; False hides these two annotations (and the
             "Overshoot" legend entry). The variation relative to the reference
             scenario remains displayed.
+        excel_path: if given, Excel workbook of the plotted data (see
+            figure_export): "Footprint" sheet (value and share of each
+            category x origin segment) and "Indicators" sheet (total,
+            variation vs reference, Safe Boundary, overshoot).
 
     Returns:
         (fig, ax) if ax=None was given as input, otherwise (None, ax).
     """
-    if use_2019_thresholds is None:
-        use_2019_thresholds = "2019" in str(scenario_name)
+    if use_2019_boundaries is None:
+        use_2019_boundaries = "2019" in str(scenario_name)
     shares_df = _prepare_shares(sharing_principle, shares_df, epc_reference)
     is_share = shares_df is not None
+
+    safe_boundary_of = _safe_boundary_getter(boundaries_df, shares_df, sharing_principle, epc_reference,
+                                       use_2019_boundaries)
 
     indicators = list(data_by_indicator.keys())
     n_indicators = len(indicators)
@@ -165,6 +223,19 @@ def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
     if not any(data is not None for data in data_by_indicator.values()):
         print("No valid data to plot")
         return (None, None) if ax is None else (None, ax)
+
+    if excel_path is not None:
+        footprint, indicator_rows = _by_scenario_tables(scenario_name, data_by_indicator, boundaries_df,
+                                                        reference_data, safe_boundary_of)
+        figure_export.write_figure_excel(excel_path, {"Footprint": footprint, "Indicators": indicator_rows}, about={
+            "Figure": f"Footprint decomposition - {scenario_name} (consumption-based)",
+            "Generated by": "planefr_lib.plot_stacked_bar.create_footprint_decomposition_by_scenario",
+            "Content": "Consumption-based footprint of each indicator, broken down by consumption category "
+                       "and origin (bars in % of the total); total, variation vs the reference scenario and "
+                       "overshoot of the Safe Boundary.",
+            "Unit": "Unit column (\"Figures unit\" of boundaries_values.xlsx)",
+            "Boundaries": _boundaries_note(sharing_principle, epc_reference),
+        })
 
     all_categories = set()
     for data in data_by_indicator.values():
@@ -214,7 +285,7 @@ def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
         sp = indicators[idx]
 
         if show_values:
-            unit_val = processing.lookup_first_text(thresholds_df, config.UNIT_ROW_ABS, sp)
+            unit_val = processing.lookup_first_text(boundaries_df, config.UNIT_ROW_ABS, sp)
             ax.text(idx, 102, f"{total_val:.0f}{f' {unit_val}' if unit_val else ''}",
                     ha="center", va="bottom", fontweight="bold", fontsize=10.5)
 
@@ -227,13 +298,9 @@ def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
 
         if not show_values:
             continue
-        if is_share:
-            threshold = _share_threshold(thresholds_df, shares_df, sp, "lb", sharing_principle, epc_reference,
-                                         use_2019_thresholds=use_2019_thresholds)
-        else:
-            threshold = processing.lookup_threshold(thresholds_df, config.THRESHOLD_LB_ABS, sp)
-        if threshold:
-            overshoot_pct = total_val / threshold
+        boundary = safe_boundary_of(sp)
+        if boundary:
+            overshoot_pct = total_val / boundary
             color = "red" if overshoot_pct > 1 else "lightgreen"
             y_pos = 95 if reference_data is not None else 98
             ax.text(idx, y_pos, f"{overshoot_pct:.1f}", ha="center", va="top",
@@ -260,85 +327,20 @@ def create_stacked_bar_chart(data_by_indicator, thresholds_df, indicator_to_lp,
     return (fig, ax) if fig is not None else (None, ax)
 
 
-def create_synthesis_figure(all_scenarios_data, thresholds_df, indicator_to_lp_list, scenario_names,
-                             group_by_category=True, sharing_principle=None,
-                             shares_df=None, show_values=True):
-    """Grid of create_stacked_bar_chart for all the scenarios (2 columns, as
-    many rows as needed), with a common legend and title.
-
-    Args:
-        group_by_category, show_values: see create_stacked_bar_chart
-        sharing_principle, shares_df: see create_stacked_bar_chart.
-            With sharing_principle="EPC", the limits are those of
-            create_radial_synthesis_figure ("UN – EPC 2050", except GHG
-            emissions: "UN – EPC 2019-2100") -- epc_reference="radial".
-
-    Returns:
-        (fig, axes_list)
-    """
-    shares_df = _prepare_shares(sharing_principle, shares_df, "radial")
-
-    n_scenarios = len(all_scenarios_data)
-    n_cols = 2 if n_scenarios > 1 else 1
-    n_rows = int(np.ceil(n_scenarios / n_cols))
-
-    fig = plt.figure(figsize=(9 * n_cols, 4 * n_rows))
-    gs = fig.add_gridspec(n_rows, n_cols, hspace=0.4, wspace=0.3)
-
-    reference_idx = config.REFERENCE_SCENARIO_IDX
-    reference_data = all_scenarios_data[reference_idx]
-    positions = [(i // n_cols, i % n_cols) for i in range(n_scenarios)]
-
-    axes_list = []
-
-    for scenario_idx, (row, col) in enumerate(positions):
-        ax = fig.add_subplot(gs[row, col])
-        axes_list.append(ax)
-
-        is_reference = scenario_idx == reference_idx
-        _, ax = create_stacked_bar_chart(
-            all_scenarios_data[scenario_idx], thresholds_df, indicator_to_lp_list[scenario_idx],
-            scenario_name=scenario_names[scenario_idx],
-            reference_data=None if is_reference else reference_data,
-            ax=ax, show_legend=False, group_by_category=group_by_category,
-            sharing_principle=sharing_principle,
-            shares_df=shares_df, epc_reference="radial", show_values=show_values,
-        )
-
-    all_categories = set()
-    for scenario_data in all_scenarios_data:
-        for data in scenario_data.values():
-            if data is not None:
-                all_categories.update(data["categories"])
-    all_handles, all_labels = _build_category_legend(colors.sort_categories(list(all_categories)))
-
-    fig.legend(all_handles, all_labels, loc="lower center", ncol=5, fontsize=10,
-               bbox_to_anchor=(0.5, -0.02), frameon=True, fancybox=True, shadow=True)
-
-    fig.suptitle(
-        "Sectoral breakdown of the environmental footprints - Scenario comparison "
-        f"(Equity criterion: {config.THRESHOLD_LB_ABS})",
-        fontsize=16, fontweight="bold", y=0.98,
-    )
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    return fig, axes_list
-
-
-def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_to_lp_list, scenario_names,
+def create_footprint_decomposition(all_scenarios_data, boundaries_df, indicator_to_lp_list, scenario_names,
                                    dls_df=None, group_by_category=True, show_pba=True, show_dls=True,
-                                   show_values=True, show_thresholds=True, display_bounds=True,
+                                   show_values=True, display_bounds=True,
                                    show_variation_bars=False,
                                    sharing_principle=None, scenario_group=None,
-                                   shares_df=None, epc_reference="radial"):
+                                   shares_df=None, epc_reference="radial", excel_path=None):
     """Alternative synthesis figure: 7 LPs in a 3x3 grid (1 bar per scenario,
     1 subplot per LP), absolute values (not normalized). Displays the
-    environmental ceiling (Safe Limit, Upper Safe Bound) and the social floor
+    environmental ceiling (Safe Boundary, High-Risk Boundary) and the social floor
     (DLS) if they exist, with an automatic axis break when the upper ceiling
     is far above the observed maximum.
 
     Args:
-        group_by_category: see create_stacked_bar_chart
+        group_by_category: see create_footprint_decomposition_by_scenario
         show_pba: True (default) to display the production-based (PBA) cross
             and its annotations on each bar; False to hide them entirely
             (bars, text, legend).
@@ -346,20 +348,16 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
             DLS lower bound and DLS upper bound (shades of blue, light ->
             dark), when dls_df provides a value for the LP; False to ignore it
             even if dls_df is given. National values read as is in the DLS
-            sheet (processing.lookup_dls): "DLS ..." rows if scenario_group is
-            config.DLS_BASE_YEAR_GROUP ("Base_year"), "DLS 2050 ..." otherwise.
+            sheet (processing.lookup_dls): "DLS ..." rows for the base-year
+            scenarios (config.is_base_year_scenario: 2015, 2019,
+            Base_year_2015, 2019_FR...), "DLS 2050 ..." for the others.
         scenario_group: displayed scenario group (config.get_scenario_folders),
             only used to choose the DLS rows (see show_dls).
         show_values: True (default) to display the values/variations above
             the bars (CBA and PBA); False hides them (the bars, the PBA cross
-            and the threshold lines are unchanged).
-        show_thresholds: True (default) to display the horizontal threshold
-            lines (Lower Safe Bound, Safe Limit, Upper Safe Bound, DLS) and the
-            associated axis break; False hides them (the values above the bars
-            remain controlled independently by show_values).
-        display_bounds: True (default, only relevant if show_thresholds=True)
-            displays Lower Safe Bound and Upper Safe Bound in addition to Safe
-            Limit (always displayed). False hides them (only Safe Limit -- and
+            and the boundary lines are unchanged).
+        display_bounds: True (default) displays Lower Safe Boundary and High-Risk Boundary in addition to Safe
+            Limit (always displayed). False hides them (only Safe Boundary -- and
             DLS if show_dls -- remains displayed).
         show_variation_bars: False (default) for the usual display (each bar =
             absolute footprint stacked by category). True to display, for all
@@ -372,30 +370,37 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
             visual marker for this zero level (dotted line). A cross marks, for
             each scenario, the actual total of its footprint (useful when some
             segments go up and others go down, to see where the net balance is).
-        sharing_principle: see create_stacked_bar_chart -- applies here to
-            threshold_lower, threshold_lb AND threshold_ub.
-        shares_df, epc_reference: see create_stacked_bar_chart (used if
+        sharing_principle: see create_footprint_decomposition_by_scenario -- applies here to
+            boundary_lower, boundary_lb AND boundary_ub.
+        shares_df, epc_reference: see create_footprint_decomposition_by_scenario (used if
             sharing_principle="EPC"/"CTR"). Here epc_reference="radial" by default:
-            same limits as create_radial_synthesis_figure ("UN – EPC 2050",
+            same limits as create_radial_synthesis ("UN – EPC 2050",
             except GHG emissions: "UN – EPC 2019-2100").
+        excel_path: if given, Excel workbook of the plotted data (see
+            figure_export): "Footprint" (category x origin segments, absolute
+            values), "Indicators" (CBA and PBA totals and their variation vs
+            the reference scenario) and "Boundaries" (Lower Safe Boundary, Safe
+            Limit, High-Risk Boundary and DLS of France, by indicator) sheets.
+            The values are always absolute, even with show_variation_bars.
 
     Returns:
         (fig, axes_list)
     """
     shares_df = _prepare_shares(sharing_principle, shares_df, epc_reference)
+    boundary_rows = []  # "Boundaries" sheet of excel_path
 
-    def threshold(threshold_row, threshold_kind, indicator_name):
+    def boundary(boundary_row, boundary_kind, indicator_name):
         if shares_df is not None:
-            return _share_threshold(thresholds_df, shares_df, indicator_name, threshold_kind,
+            return _share_boundary(boundaries_df, shares_df, indicator_name, boundary_kind,
                                     sharing_principle, epc_reference)
-        return processing.lookup_threshold(thresholds_df, threshold_row, indicator_name)
+        return processing.lookup_boundary(boundaries_df, boundary_row, indicator_name)
 
     reference_idx = config.REFERENCE_SCENARIO_IDX
     # The reference scenario (base_year) keeps its position, followed by the
     # trend scenario, then the other scenarios by decreasing mean variation of
     # the footprint vs the reference (smallest decrease / largest increase next
     # to the trend scenario, largest decrease the furthest away) -- same logic
-    # as create_radial_synthesis_figure (processing.sort_scenarios_by_reduction).
+    # as create_radial_synthesis (processing.sort_scenarios_by_reduction).
     value_keys = ["cba"] + (["pba"] if show_pba else [])
     display_order = processing.sort_scenarios_by_reduction(all_scenarios_data, scenario_names, reference_idx, value_keys)
     scenario_names = [scenario_names[i] for i in display_order]
@@ -414,14 +419,18 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
     axes_list = []
     legend_categories = set()
     # DLS levels: (key, row of the DLS sheet, color, label, scope).
-    # 2050 group: base-year DLS on the Base year bar only, DLS 2050 on the
-    # other scenarios (like the radial synthesis). Base_year group: the 3
-    # levels, on all the bars.
-    if scenario_group == config.DLS_BASE_YEAR_GROUP:
-        dls_levels = [(key, "DLS" + suffix, color, "DLS Base year" + label[len("DLS"):], "all")
+    # Chosen per scenario, whatever the group (config.is_base_year_scenario):
+    # "DLS ..." for the base-year scenarios (2015, 2019, Base_year_2015,
+    # 2019_FR...), "DLS 2050 ..." for the others. All of one kind: the 3 levels
+    # on all the bars; mixed: base-year DLS on the base-year bars ("base"),
+    # DLS 2050 on the others ("others"), like the radial synthesis.
+    base_idx = {i for i, name in enumerate(scenario_names) if config.is_base_year_scenario(name)}
+    if len(base_idx) in (0, len(scenario_names)):
+        prefix, label_prefix = (("DLS", "DLS Base year") if base_idx else ("DLS 2050", "DLS 2050"))
+        dls_levels = [(key, prefix + suffix, color, label_prefix + label[len("DLS"):], "all")
                       for key, suffix, color, label in config.DLS_LEVELS]
     else:
-        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "ref"),
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "base"),
                       ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "others")]
     dls_levels_found = {key: False for key, *_ in dls_levels}  # DLS levels drawn (legend)
 
@@ -532,36 +541,36 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
             pba_values = [None] * n_scenarios
             max_pba = 0.0
 
-        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", indicator_name)
-        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", indicator_name)
+        boundary_lb = boundary(config.BOUNDARY_LB_ABS, "lb", indicator_name)
+        boundary_ub = boundary(config.BOUNDARY_UB_ABS, "ub", indicator_name)
         # DLS (and its bounds), by key of config.DLS_LEVELS; None if missing for this LP
         dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
             for key, dls_row, *_ in dls_levels:
                 dls_values[key] = processing.lookup_dls(dls_df, dls_row, indicator_name)
-        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", indicator_name)
+        boundary_lower = boundary(config.BOUNDARY_LOWER_ABS, "lower", indicator_name)
 
-        if not show_thresholds:
-            # Hides all the threshold lines (Lower Safe Bound/Safe Limit/Upper
-            # Safe Bound/DLS): setting them to None here disables in cascade all
-            # the downstream logic depending on them (axhline, axis break, room
-            # reserved in bottom_max/ylim). Controlled independently of
-            # show_values (values above the bars).
-            threshold_lb = None
-            threshold_ub = None
-            threshold_lower = None
-            dls_values = {key: None for key in dls_values}
-        elif not display_bounds:
-            # Only hides the 2 "bounds" (Lower Safe Bound, Upper Safe Bound):
-            # Safe Limit (and DLS, controlled independently by show_dls) remains.
-            threshold_ub = None
-            threshold_lower = None
+        # Exported before the display options hide some of them
+        boundary_rows.append({
+            "Indicator": indicator_name,
+            "Unit": figure_export.indicator_unit(boundaries_df, indicator_name),
+            "Lower Safe Boundary": figure_export.clean_value(boundary_lower),
+            "Safe Boundary": figure_export.clean_value(boundary_lb),
+            "High-Risk Boundary": figure_export.clean_value(boundary_ub),
+            **{dls_label: figure_export.clean_value(dls_values[key]) for key, _, _, dls_label, _ in dls_levels},
+        })
 
-        # Axis break if a threshold (lower and/or upper) is far above the
+        if not display_bounds:
+            # Only hides the 2 "bounds" (Lower Safe Boundary, High-Risk Boundary):
+            # Safe Boundary (and DLS, controlled independently by show_dls) remains.
+            boundary_ub = None
+            boundary_lower = None
+
+        # Axis break if a boundary (lower and/or upper) is far above the
         # observed max, so as not to squash the bars by zooming on a very
-        # distant threshold.
-        use_break_lb = threshold_lb is not None and max_total > 0 and threshold_lb > max_total * 1.5
-        use_break_ub = threshold_ub is not None and max_total > 0 and threshold_ub > max_total * 1.6
+        # distant boundary.
+        use_break_lb = boundary_lb is not None and max_total > 0 and boundary_lb > max_total * 1.5
+        use_break_ub = boundary_ub is not None and max_total > 0 and boundary_ub > max_total * 1.6
         use_break = use_break_lb or use_break_ub
 
         ax_top = None
@@ -600,7 +609,7 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
 
         # The Y axis displays % relative to the total of the reference scenario
         # (base year) rather than absolute values: 0% at the level of the dotted
-        # base_total line, -y% below, +y% above. The data (bars, thresholds,
+        # base_total line, -y% below, +y% above. The data (bars, boundaries,
         # PBA) remain positioned in absolute values -- only the tick text is
         # reformatted.
         def _relative_pct(y, _pos, _baseline=baseline_total):
@@ -652,17 +661,17 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
         # relative axis, in all modes (not only variation bars).
         ax.axhline(y=baseline_total, color="black", linestyle=":", linewidth=1.3, zorder=9)
 
-        if threshold_lower is not None:
-            # Always < threshold_lb: never concerned by the axis break
-            # (reserved for distant thresholds, see use_break_lb/use_break_ub).
-            ax.axhline(y=threshold_lower, color=config.LOWER_SAFE_BOUND_COLOR, linestyle="-", linewidth=2.5,
-                       label="Lower Safe Bound", zorder=10)
-        if threshold_lb is not None:
+        if boundary_lower is not None:
+            # Always < boundary_lb: never concerned by the axis break
+            # (reserved for distant boundaries, see use_break_lb/use_break_ub).
+            ax.axhline(y=boundary_lower, color=config.LOWER_SAFE_BOUNDARY_COLOR, linestyle="-", linewidth=2.5,
+                       label="Lower Safe Boundary", zorder=10)
+        if boundary_lb is not None:
             (ax_top if (use_break_lb and ax_top is not None) else ax).axhline(
-                y=threshold_lb, color="#0d9a33", linestyle="-", linewidth=2.5, label="Safe Limit", zorder=10)
-        if threshold_ub is not None:
+                y=boundary_lb, color="#0d9a33", linestyle="-", linewidth=2.5, label="Safe Boundary", zorder=10)
+        if boundary_ub is not None:
             (ax_top if (use_break_ub and ax_top is not None) else ax).axhline(
-                y=threshold_ub, color="#bc270a", linestyle="-", linewidth=2.5, label="Upper Safe Bound", zorder=10)
+                y=boundary_ub, color="#bc270a", linestyle="-", linewidth=2.5, label="High-Risk Boundary", zorder=10)
         for key, _, dls_color, dls_label, scope in dls_levels:
             if dls_values[key] is not None:
                 dls_levels_found[key] = True
@@ -670,21 +679,15 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
                     ax.axhline(y=dls_values[key], color=dls_color, linestyle="--", linewidth=2.5,
                                label=dls_label, zorder=10)
                     continue
-                # Line limited to the Base year bar ("ref") or to the other
-                # scenarios ("others"): from the edge of the axis up to the
-                # neighboring bar (half bar width). Added via add_artist (and not
-                # ax.plot) so as not to change the data limits of the axis: the
-                # ±10 bounds are simply clipped at the edge of the axis.
-                # Edges of the bars next to the Base year bar.
-                ref_left = reference_idx - 1 + bar_width / 2
-                ref_right = reference_idx + 1 - bar_width / 2
-                x_min = -10 if reference_idx == 0 else ref_left
-                if scope == "ref":
-                    spans = [(x_min, ref_right)]
-                else:
-                    spans = [(ref_right, n_scenarios + 10)]
-                    if reference_idx > 0:
-                        spans.insert(0, (-10, ref_left))
+                # Line limited to the base-year bars ("base") or to the 2050
+                # scenarios ("others"): each bar of the set, widened up to
+                # the middle of the gaps (to the edge of the axis at both
+                # ends). Added via add_artist (and not ax.plot) so as not to
+                # change the data limits of the axis: the ±10 bounds are simply
+                # clipped at the edge of the axis.
+                idxs = [i for i in range(n_scenarios) if (i in base_idx) == (scope == "base")]
+                spans = [(-10 if i == 0 else i - 0.5, n_scenarios + 10 if i == n_scenarios - 1 else i + 0.5)
+                         for i in idxs]
                 for x0, x1 in spans:
                     dls_line = Line2D([x0, x1], [dls_values[key]] * 2, color=dls_color, linestyle="--",
                                       linewidth=2.5, zorder=10, transform=ax.transData)
@@ -694,17 +697,17 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
         bottom_max = max(max_total, *(v for v in dls_values.values() if v is not None), max_pba)
         if show_variation_bars:
             bottom_max = max(bottom_max, float(np.max(pos_bottom)))
-        if threshold_lb is not None and not use_break_lb:
-            bottom_max = max(bottom_max, threshold_lb)
-        if threshold_ub is not None and not use_break_ub:
-            bottom_max = max(bottom_max, threshold_ub)
+        if boundary_lb is not None and not use_break_lb:
+            bottom_max = max(bottom_max, boundary_lb)
+        if boundary_ub is not None and not use_break_ub:
+            bottom_max = max(bottom_max, boundary_ub)
         # Y grid common to all the subplots: a grid line every 10 % of the
         # reference total (baseline_total), but a label only every 20 %, so that
         # 0 % and -100 % (= 0 in absolute terms, lower bound of the axis) are
         # always visible, and that the spacing is visually identical from one LP
         # to another despite different units/absolute scales. Only applies to
         # the main axis: ax_top (small segment above an axis break) keeps free
-        # ticks (see below), the distant thresholds it shows not being on the
+        # ticks (see below), the distant boundaries it shows not being on the
         # same 10/20 % grid.
         if baseline_total:
             step = baseline_total / 10
@@ -712,8 +715,8 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
             ax.yaxis.set_minor_locator(MultipleLocator(step))
 
         if use_break and ax_top is not None:
-            far_thresholds = [t for t, broken in ((threshold_lb, use_break_lb), (threshold_ub, use_break_ub)) if broken]
-            top_min, top_max = min(far_thresholds) * 0.98, max(far_thresholds) * 1.02
+            far_boundaries = [t for t, broken in ((boundary_lb, use_break_lb), (boundary_ub, use_break_ub)) if broken]
+            top_min, top_max = min(far_boundaries) * 0.98, max(far_boundaries) * 1.02
             if top_min == top_max:
                 top_min, top_max = top_min * 0.97, top_max * 1.03
             ax_top.set_ylim(top_min, top_max)
@@ -767,19 +770,18 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
 
     legend_handles, legend_labels = _build_category_legend(colors.sort_categories(list(legend_categories)))
 
-    if show_thresholds:
-        if display_bounds:
-            legend_handles.append(Line2D([0], [0], color=config.LOWER_SAFE_BOUND_COLOR, linewidth=3))
-            legend_labels.append("Lower Safe Bound")
-        legend_handles.append(Line2D([0], [0], color="green", linewidth=3))
-        legend_labels.append("Safe Limit")
-        if display_bounds:
-            legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
-            legend_labels.append("Upper Safe Bound")
+    if display_bounds:
+        legend_handles.append(Line2D([0], [0], color=config.LOWER_SAFE_BOUNDARY_COLOR, linewidth=3))
+        legend_labels.append("Lower Safe Boundary")
+    legend_handles.append(Line2D([0], [0], color="green", linewidth=3))
+    legend_labels.append("Safe Boundary")
+    if display_bounds:
+        legend_handles.append(Line2D([0], [0], color="red", linewidth=3))
+        legend_labels.append("High-Risk Boundary")
     if show_pba:
         legend_handles.append(Line2D([0], [0], marker="X", color="black", linestyle="None", markersize=11))
         legend_labels.append("Production-based")
-    if show_dls and dls_df is not None and show_thresholds:
+    if show_dls and dls_df is not None:
         for key, _, dls_color, dls_label, _ in dls_levels:
             if dls_levels_found[key]:
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3))
@@ -797,5 +799,48 @@ def create_synthesis_figure_by_lp(all_scenarios_data, thresholds_df, indicator_t
         "Planetary boundaries assessment of French NZE Scenarios",
         fontsize=16, fontweight="bold", y=0.98,
     )
+
+    if excel_path is not None:
+        plotted = indicators[:len(positions)]
+        reference_data = all_scenarios_data[reference_idx]
+        footprint, indicator_rows = [], []
+        for scenario_idx, (scenario_name, scenario_data) in enumerate(zip(scenario_names, all_scenarios_data)):
+            footprint += figure_export.footprint_rows(scenario_name, scenario_data, boundaries_df, plotted)
+            for indicator_name in plotted:
+                payload = scenario_data.get(indicator_name)
+                if payload is None:
+                    continue
+                cba = processing.extract_value(payload, "cba")
+                pba = processing.extract_value(payload, "pba")
+                # No variation for the reference scenario itself
+                ref_payload = None if scenario_idx == reference_idx else reference_data.get(indicator_name)
+                indicator_rows.append({
+                    "Scenario": scenario_name,
+                    "Indicator": indicator_name,
+                    "Unit": figure_export.indicator_unit(boundaries_df, indicator_name),
+                    "Consumption-based (CBA)": cba,
+                    "CBA variation vs reference scenario (%)":
+                        figure_export.variation_pct(cba, processing.extract_value(ref_payload, "cba")),
+                    "Production-based (PBA)": pba,
+                    "PBA variation vs reference scenario (%)":
+                        figure_export.variation_pct(pba, processing.extract_value(ref_payload, "pba")),
+                })
+        figure_export.write_figure_excel(
+            excel_path,
+            {"Footprint": footprint, "Indicators": indicator_rows, "Boundaries": boundary_rows},
+            about={
+                "Figure": "Planetary boundaries assessment of French NZE Scenarios (footprint decomposition)",
+                "Generated by": "planefr_lib.plot_stacked_bar.create_footprint_decomposition",
+                "Content": "Consumption-based footprint of France by indicator and scenario, broken down by "
+                           "consumption category and origin; consumption- and production-based totals; "
+                           "boundaries of France (planetary boundaries and decent living standards).",
+                "Scenario group": scenario_group,
+                "Reference scenario": scenario_names[reference_idx],
+                "Scenario order": ", ".join(scenario_names),
+                "Unit": "Unit column (\"Figures unit\" of boundaries_values.xlsx)",
+                "Boundaries": _boundaries_note(sharing_principle, epc_reference),
+                "DLS": "Decent living standards, DLS sheet of boundaries_values.xlsx (national values)",
+            },
+        )
 
     return fig, axes_list

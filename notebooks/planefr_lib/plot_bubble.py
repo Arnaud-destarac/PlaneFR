@@ -14,7 +14,7 @@ Two-step pipeline:
      indicator (columns = sectors + categories, rows = M_imp/M_dom/
      M_row/Y_imp/Y_dom and M*Y products), sectors sorted according to the row
      chosen in B1 (editable by hand in Excel).
-  2. plot_bubble_chart: bubble chart read back from these workbooks, by
+  2. create_driver_comparison: bubble chart read back from these workbooks, by
      consumption categories or by first n sectors (type="categories"/"products"),
      baseline alone or compared with a 2nd scenario (scenarios=False/True).
 """
@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from . import colors, io, processing
+from . import colors, figure_export, io, processing
 
 # Scaling of the bubble sizes.
 BUBBLE_SCALE = 1600.0
@@ -622,8 +622,31 @@ def _figure_subject(type, n):
     return "consumption categories" if type == "categories" else f"top {n} sectors per indicator"
 
 
-def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
-                      comparison_excel_path=None, base_label=None, s1_label=None):
+def _bubble_rows(label, payloads, shares, sheets, type):
+    """Rows of the "Bubbles" sheet of create_driver_comparison for one
+    scenario: one row per indicator x displayed item, in display order."""
+    rows = []
+    for indicator_name, payload in payloads.items():
+        sort_row = sheets[indicator_name]["sort_row"] if indicator_name in sheets else None
+        for rank, item in enumerate(payload.columns, start=1):
+            column = payload[item]
+            rows.append({
+                "Scenario": label,
+                "Indicator": indicator_name,
+                "Sorted by": sort_row,
+                "Rank": rank,
+                "Consumption category" if type == "categories" else "Sector": item,
+                **{f"{key} (bubble height)": figure_export.clean_value(column.loc[list(components)].sum())
+                   for key, components, _ in BUBBLE_SERIES},
+                **{row: figure_export.clean_value(column.loc[row]) for row in BUBBLE_ROWS},
+                f"{SHARE_AXIS_LABEL} (bars)": figure_export.clean_value(shares[indicator_name][rank - 1]),
+            })
+    return rows
+
+
+def create_driver_comparison(base_excel_path, type="categories", n=10, scenarios=False,
+                             comparison_excel_path=None, base_label=None, s1_label=None,
+                             excel_path=None):
     """Bubble chart from the Excel workbooks of export_indicator_tables_excel:
     1 subplot per indicator, 2 bubbles per item of the X axis (see
     BUBBLE_SERIES): M_dom+M_imp (size Y_dom) and M_row (size Y_imp).
@@ -640,6 +663,12 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
             The displayed columns and their order are those of the baseline
             ranking, to compare the same items in both scenarios.
         base_label, s1_label: legends; by default deduced from the file names.
+        excel_path: if given, Excel workbook of the plotted data (see
+            figure_export), "Bubbles" sheet: one row per scenario x indicator x
+            displayed item (in display order) with the bubble heights
+            (M_dom+M_imp, M_row), the rows M_imp/M_dom/M_row/Y_imp/Y_dom (the
+            bubble sizes are Y_dom and Y_imp) and the share of the item in the
+            total footprint (bars).
 
     Returns:
         (fig, axes)
@@ -649,26 +678,45 @@ def plot_bubble_chart(base_excel_path, type="categories", n=10, scenarios=False,
     base_payloads = {sp: select_bubble_items(sheet, type, n) for sp, sheet in base_sheets.items()}
     base_shares = {sp: _shares(base_sheets[sp], list(p.columns), type) for sp, p in base_payloads.items()}
     titles = {sp: _subplot_title(sp, sheet) for sp, sheet in base_sheets.items()}
+    bubble_rows = _bubble_rows(base_label, base_payloads, base_shares, base_sheets, type)
 
     if not scenarios:
-        return _plot_single(base_payloads, base_shares, titles, type, n, base_label)
+        fig, axes = _plot_single(base_payloads, base_shares, titles, type, n, base_label)
+        subject = base_label
+    else:
+        if comparison_excel_path is None:
+            raise ValueError("scenarios=True requires comparison_excel_path")
+        s1_sheets = load_indicator_tables_excel(comparison_excel_path)
+        s1_label = s1_label or _scenario_label(comparison_excel_path)
+        s1_payloads, s1_shares = {}, {}
+        for sp, base_payload in base_payloads.items():
+            items = list(base_payload.columns)
+            if sp in s1_sheets:
+                table_key = "category_table" if type == "categories" else "sector_table"
+                s1_payloads[sp] = s1_sheets[sp][table_key].reindex(index=BUBBLE_ROWS, columns=items).fillna(0.0)
+                s1_shares[sp] = _shares(s1_sheets[sp], items, type)
+            else:  # indicator missing from the compared scenario: bubbles and bars drawn at 0
+                s1_payloads[sp] = pd.DataFrame(0.0, index=BUBBLE_ROWS, columns=items)
+                s1_shares[sp] = np.zeros(len(items))
+        fig, axes = _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles, type, n,
+                                     base_label, s1_label)
+        bubble_rows += _bubble_rows(s1_label, s1_payloads, s1_shares, s1_sheets, type)
+        subject = f"{base_label} vs {s1_label}"
 
-    if comparison_excel_path is None:
-        raise ValueError("scenarios=True requires comparison_excel_path")
-    s1_sheets = load_indicator_tables_excel(comparison_excel_path)
-    s1_label = s1_label or _scenario_label(comparison_excel_path)
-    s1_payloads, s1_shares = {}, {}
-    for sp, base_payload in base_payloads.items():
-        items = list(base_payload.columns)
-        if sp in s1_sheets:
-            table_key = "category_table" if type == "categories" else "sector_table"
-            s1_payloads[sp] = s1_sheets[sp][table_key].reindex(index=BUBBLE_ROWS, columns=items).fillna(0.0)
-            s1_shares[sp] = _shares(s1_sheets[sp], items, type)
-        else:  # indicator missing from the compared scenario: bubbles and bars drawn at 0
-            s1_payloads[sp] = pd.DataFrame(0.0, index=BUBBLE_ROWS, columns=items)
-            s1_shares[sp] = np.zeros(len(items))
-    return _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles, type, n,
-                            base_label, s1_label)
+    if excel_path is not None and fig is not None:
+        figure_export.write_figure_excel(excel_path, {"Bubbles": bubble_rows}, about={
+            "Figure": f"Bubble chart - {subject} - {_figure_subject(type, n)}",
+            "Generated by": "planefr_lib.plot_bubble.create_driver_comparison",
+            "Content": "Environmental intensities (multipliers M) and final demands (Y) of the displayed "
+                       "consumption categories or sectors, by indicator. Bubble heights: M_dom+M_imp "
+                       "(French products, size Y_dom) and M_row (imported products, size Y_imp).",
+            "Source workbooks": ", ".join(Path(p).name for p in
+                                          [base_excel_path] + ([comparison_excel_path] if scenarios else [])),
+            "Order": "Items in decreasing order of the 'Sorted by' row of the source workbook "
+                     "(the order of the reference scenario in comparison mode).",
+            "Share": "Share of the item in the total footprint of the indicator (sum over all the sectors).",
+        })
+    return fig, axes
 
 
 def _plot_single(payloads, shares, titles, type, n, label):

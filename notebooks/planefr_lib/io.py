@@ -1,6 +1,6 @@
 """
 Loading of the source data: Excel files (characterization factors, bridge
-matrices, thresholds, budget shares, population) and MRIO pickles by scenario
+matrices, boundaries, budget shares, population) and MRIO pickles by scenario
 (d_cba, F_x_dom, F_Y_tot, M).
 
 General convention of the pickle loaders: they return None if the file does
@@ -92,26 +92,34 @@ def load_bridge_m_matrix(sheet_name="M"):
     return (bridge_m > 0).astype(int)
 
 
-def load_thresholds(scenario_group=None):
-    """config.THRESHOLDS_SHEET sheet ("All") of thresholds.xlsx: planetary
-    thresholds/limits by indicator (one column per indicator, one row per
-    notion). If scenario_group ends with "_agri", reads config.THRESHOLDS_AGRI_SHEET
+def load_boundaries(scenario_group=None):
+    """config.BOUNDARIES_SHEET sheet ("All") of boundaries_values.xlsx: planetary
+    boundaries/limits by indicator (one column per indicator, one row per
+    notion). If scenario_group ends with "_agri", reads config.BOUNDARIES_AGRI_SHEET
     ("Agri") instead.
 
     Row names are normalized (repeated whitespace collapsed to a single space,
     ends stripped): the sheet contains several labels with double spaces or
     trailing spaces (e.g. "Unit conversion Exiobase  (p.cap)"), which would
     otherwise break the lookups by exact name (see planefr_lib.config)."""
-    sheet = config.THRESHOLDS_AGRI_SHEET if is_agri_group(scenario_group) else config.THRESHOLDS_SHEET
-    df = pd.read_excel(config.THRESHOLDS_FILE, sheet_name=sheet, index_col=0)
+    sheet = config.BOUNDARIES_AGRI_SHEET if is_agri_group(scenario_group) else config.BOUNDARIES_SHEET
+    df = pd.read_excel(config.BOUNDARIES_FILE, sheet_name=sheet, index_col=0)
     df.index = df.index.map(_normalize_label)
     df.columns = df.columns.map(_normalize_label)
+    # The "Agri" sheet spells the world budget rows in lowercase ("Safe
+    # boundary"...): rename them to the canonical config names, otherwise
+    # every budget lookup returns None (empty figures).
+    canonical = {str(name).casefold(): name for name in (
+        config.WORLD_BUDGET_ROW_LOWER, config.WORLD_BUDGET_ROW_LB, config.WORLD_BUDGET_ROW_UB,
+        config.BOUNDARY_LOWER_ABS, config.BOUNDARY_LB_ABS, config.BOUNDARY_UB_ABS,
+        config.UNIT_ROW_ABS, config.UNIT_ROW_PER_CAPITA)}
+    df.index = df.index.map(lambda r: canonical.get(r.casefold(), r) if isinstance(r, str) else r)
     return df
 
 
 def load_dls():
-    """config.DLS_SHEET sheet of thresholds.xlsx: social floors (decent living standards)."""
-    return pd.read_excel(config.THRESHOLDS_FILE, sheet_name=config.DLS_SHEET, index_col=0)
+    """config.DLS_SHEET sheet of boundaries_values.xlsx: social floors (decent living standards)."""
+    return pd.read_excel(config.BOUNDARIES_FILE, sheet_name=config.DLS_SHEET, index_col=0)
 
 
 def load_population_df():
@@ -133,9 +141,13 @@ def load_population_df():
 
 
 def bdf_file(scenario_group=None):
-    """File impacts_facteurs_agrégé_{scenario_group}*.xlsx produced by BdF.ps1
-    (e.g. group "Base_year" -> impacts_facteurs_agrégé_Base_year_2019_FR.xlsx).
-    scenario_group None = config.SCENARIO_GROUP. Exactly one file must match."""
+    """File impacts_facteurs_agrégé_{scenario_group}*.xlsx produced by BdF.ps1,
+    which writes one file per scenario of its group:
+    impacts_facteurs_agrégé_{group}_{scenario}.xlsx (e.g. group "BdF" ->
+    impacts_facteurs_agrégé_BdF_2019.xlsx and impacts_facteurs_agrégé_BdF_S1+.xlsx).
+    If several files match, the one of the non-base-year scenario of the group
+    is returned (the base year is read through bdf_comparison_file).
+    scenario_group None = config.SCENARIO_GROUP."""
     if scenario_group is None:
         scenario_group = config.SCENARIO_GROUP
     base = config.BDF_FILE
@@ -143,6 +155,11 @@ def bdf_file(scenario_group=None):
     if exact.is_file():
         return exact
     matches = sorted(base.parent.glob(f"{base.stem}_{scenario_group}_*{base.suffix}"))
+    if len(matches) > 1:
+        prefix = f"{base.stem}_{scenario_group}_"
+        not_base = [p for p in matches if not _is_base_year_scenario(p.stem[len(prefix):])]
+        if len(not_base) == 1:
+            return not_base[0]
     if len(matches) != 1:
         found = [p.name for p in matches] or "none"
         raise FileNotFoundError(
@@ -152,16 +169,15 @@ def bdf_file(scenario_group=None):
 
 
 def _is_base_year_scenario(scenario_name):
-    """"Base year" scenario folder (2019_FR, Base_year_2015...)."""
-    return "2019" in scenario_name or scenario_name.startswith("Base_year")
+    """"Base year" scenario folder (see config.is_base_year_scenario)."""
+    return config.is_base_year_scenario(scenario_name)
 
 
 def bdf_comparison_file(scenario_group=None):
     """BdF file of the comparison scenario of a 2-scenario group (e.g. group
-    "S1+" = 2019_FR + S1_2050): the "base year" scenario of the group, read in
-    impacts_facteurs_agrégé_{group}_{scenario}.xlsx if it exists, otherwise in
-    the file of the config.DLS_BASE_YEAR_GROUP group (impacts_facteurs_agrégé_Base_year*.xlsx).
-    The file of the group itself (bdf_file) holds the other scenario (e.g. S1_2050).
+    "BdF" = 2019 + S1+): the "base year" scenario of the group, read in
+    impacts_facteurs_agrégé_{group}_{scenario}.xlsx (e.g. ..._BdF_2019.xlsx).
+    The other scenario is read through bdf_file (e.g. ..._BdF_S1+.xlsx).
 
     Returns:
         Path, or None if the group contains only one scenario (or is itself
@@ -169,8 +185,8 @@ def bdf_comparison_file(scenario_group=None):
     """
     if scenario_group is None:
         scenario_group = config.SCENARIO_GROUP
-    group_dir = config.BASE_DATA_DIR / scenario_group
-    if not scenario_group or scenario_group == config.DLS_BASE_YEAR_GROUP or not group_dir.is_dir():
+    group_dir = config.get_group_dir(scenario_group) if scenario_group else None
+    if not scenario_group or group_dir is None:
         return None
     scenarios = sorted(d.name for d in group_dir.iterdir() if config._is_scenario_folder(d))
     if len(scenarios) < 2:
@@ -182,7 +198,9 @@ def bdf_comparison_file(scenario_group=None):
             f"including 1 base year (found: {scenarios})")
     stem, suffix = config.BDF_FILE.stem, config.BDF_FILE.suffix
     specific = config.BDF_FILE.with_name(f"{stem}_{scenario_group}_{base[0]}{suffix}")
-    return specific if specific.is_file() else bdf_file(config.DLS_BASE_YEAR_GROUP)
+    if not specific.is_file():
+        raise FileNotFoundError(f"BdF file of the base year not found: {specific} (run BdF.ps1)")
+    return specific
 
 
 def load_bdf(sheet_name="décile", scenario_group=None, path=None):

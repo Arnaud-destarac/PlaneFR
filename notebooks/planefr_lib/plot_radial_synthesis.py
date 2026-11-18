@@ -1,24 +1,21 @@
 """
-"Radial wheel of planetary boundaries" figure: 1 sector (wedge) per LP, with
-1 radial bar per scenario (height = value / Safe Limit, so the Safe Limit is a
+"Radial wheel of planetary boundaries" figure (radial_synthesis notebook,
+create_radial_synthesis, which also writes its data into an Excel workbook if
+excel_path is given -- see figure_export): 1 sector (wedge) per LP, with
+1 radial bar per scenario (height = value / Safe Boundary, so the Safe Boundary is a
 circle of constant radius = 1L), an annotated outer ring (1 sub-band per
 scenario) and an LP name + unit per sector.
 
 A single function, driven by 2 independent booleans show_cba/show_pba (both
 True by default -- the figure then combines both):
-  - show_cba=True: consumption values. The domestic/imported data by category
-    exist for the CBA -> each bar can be stacked like create_stacked_bar_chart
-    (solid dom + hatched imp, by consumption category), just folded into a
-    radial instead of a Cartesian layout. show_categories and
-    show_import_split (bool, independent) enable/disable each of these two
-    distinctions; if both are False, the bar becomes solid again, colored with
-    the color of the LP (shaded by scenario if show_pba=False, see below).
+  - show_cba=True: consumption values (domestic + imported, all categories
+    merged): each bar is solid, colored with the color of the LP (shaded by
+    scenario if show_pba=False, see below).
   - show_pba=True: production values (payload["pba"]). This is already a
     single scalar in the source data (process_single_indicator_scenario does
-    not break it down by category or by dom/imp) -> each bar remains solid,
+    not break it down by category or by dom/imp) -> each bar is solid,
     colored with a lighter shade of the LP color (to distinguish it from the
-    CBA when both are displayed), whatever show_categories/show_import_split
-    (ignored on the PBA side).
+    CBA when both are displayed).
   - show_cba=True AND show_pba=True: both accountings on the same figure --
     for each scenario, 2 adjacent bars (CBA then PBA) and 2 adjacent sub-bands
     in the outer ring.
@@ -48,8 +45,8 @@ import matplotlib.patheffects as pe
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from . import colors, config, io, processing
-from .plot_stacked_bar import _build_category_legend
+from . import colors, config, figure_export, io, processing
+from .plot_stacked_bar import _boundaries_note
 from .processing import DOMESTIC, IMPORTED
 
 # ============================================================================
@@ -69,9 +66,9 @@ LP_COLORS = {
 }
 _FALLBACK_LP_COLOR = "#4c78a8"
 
-LB_COLOR = "#0d9a33"    # same as plot_stacked_bar.py / plot_overshoot.py ("Safe Limit")
-UB_COLOR = "#bc270a"    # same as plot_stacked_bar.py / plot_overshoot.py ("Upper Safe Bound")
-LOWER_COLOR = config.LOWER_SAFE_BOUND_COLOR  # same as plot_stacked_bar.py / plot_overshoot.py ("Lower Safe Bound")
+LB_COLOR = "#0d9a33"    # same as plot_stacked_bar.py / plot_overshoot.py ("Safe Boundary")
+UB_COLOR = "#bc270a"    # same as plot_stacked_bar.py / plot_overshoot.py ("High-Risk Boundary")
+LOWER_COLOR = config.LOWER_SAFE_BOUNDARY_COLOR  # same as plot_stacked_bar.py / plot_overshoot.py ("Lower Safe Boundary")
 
 # BdF with comparison (group of 2 scenarios): outline of the gap to the base year
 COMPARISON_EDGE_COLOR = "black"
@@ -79,12 +76,12 @@ COMPARISON_EDGE_WIDTH = 0.3
 
 # A large overshoot (e.g. GHG emissions at ~16L) would squash the radial scale
 # of all the sectors: with scale_diff=True, the radial ceiling is capped at this
-# multiple of the Safe Limit, whatever radial_power (unless r_max is explicit).
+# multiple of the Safe Boundary, whatever radial_power (unless r_max is explicit).
 # The bars exceeding it are truncated at the outer circle and their actual
 # level ("16L") is written at their top.
 SCALE_DIFF_CAP_REL = 6.0
 
-# Margin (fraction of the maximum relative value -- bar or UB/LB/DLS threshold)
+# Margin (fraction of the maximum relative value -- bar or UB/LB/DLS boundary)
 # added above this value to set the radial ceiling: the outer ring starts just
 # above the highest element, without rounding up to the next whole L (which
 # could leave up to 1L of dead space).
@@ -95,11 +92,11 @@ RADIAL_AXIS_MARGIN_FRAC = 0.02
 # above the (total/variation) cell matching it in the outer ring.
 SCENARIO_LABEL_INDICATORS = ("Raw material consumption", "Blue water consumption")
 
-# scale_UB=True: common position (in multiples of the Safe Limit, before
-# radial_power) to which the Upper Safe Bound of each sector is brought -- same
+# scale_UB=True: common position (in multiples of the Safe Boundary, before
+# radial_power) to which the High-Risk Boundary of each sector is brought -- same
 # ratio as the "Increasing Risk" / "High-Risk Zone" boundary of plot_overshoot
-# (config.RISK_TRANSITION_REL / config.SAFE_LIMIT_REL).
-UB_SCALED_REL = config.RISK_TRANSITION_REL / config.SAFE_LIMIT_REL
+# (config.RISK_TRANSITION_REL / config.SAFE_BOUNDARY_REL).
+UB_SCALED_REL = config.RISK_TRANSITION_REL / config.SAFE_BOUNDARY_REL
 
 
 # ============================================================================
@@ -143,9 +140,9 @@ def _wedge_geometry(n_lp, n_scenarios, gap_frac=0.10, bar_frac=0.82):
 
 
 def _ub_slope(ub_rel):
-    """Slope of the scale_UB scale beyond the Safe Limit: brings the Upper Safe
-    Bound (ub_rel, in multiples of the Safe Limit) to UB_SCALED_REL. None if
-    the row has no usable Upper Safe Bound (missing or <= Safe Limit) -- the
+    """Slope of the scale_UB scale beyond the Safe Boundary: brings the Upper Safe
+    Bound (ub_rel, in multiples of the Safe Boundary) to UB_SCALED_REL. None if
+    the row has no usable High-Risk Boundary (missing or <= Safe Boundary) -- the
     sector then keeps the 1L scale."""
     if ub_rel is None or not np.isfinite(ub_rel) or ub_rel <= 1:
         return None
@@ -154,8 +151,8 @@ def _ub_slope(ub_rel):
 
 def _scale_rel(rel, slope):
     """Scale specific to a sector (scale_UB, same logic as
-    plot_overshoot.create_overshoot_safe_space_figure_by_region): piecewise
-    linear, unchanged between 0 and the Safe Limit (1L), then with slope
+    plot_overshoot.create_multi_regions_synthesis): piecewise
+    linear, unchanged between 0 and the Safe Boundary (1L), then with slope
     `slope` beyond (see _ub_slope). Identity if slope is None."""
     if rel is None or slope is None or rel <= 1:
         return rel
@@ -187,11 +184,11 @@ def _tangential_rotation_deg(theta_rad):
 
 
 def _nice_radial_ticks(rel_cap, max_ticks=6):
-    """Integer ticks (in multiples of the Safe Limit) from 1 to floor(rel_cap)
+    """Integer ticks (in multiples of the Safe Boundary) from 1 to floor(rel_cap)
     (the actual radial ceiling being set separately, just above rel_cap -- see
     RADIAL_AXIS_MARGIN_FRAC -- a tick at rel_cap itself would make no sense if
     it is not an integer), subsampled if too many (same idea as
-    plot_overshoot._set_break_axis_ticks). 1L is always included (Safe Limit
+    plot_overshoot._set_break_axis_ticks). 1L is always included (Safe Boundary
     circle)."""
     r_floor = max(1, int(np.floor(rel_cap)))
     ticks = list(range(1, r_floor + 1))
@@ -206,7 +203,7 @@ def _nice_radial_ticks(rel_cap, max_ticks=6):
 def _regular_radial_ticks(rel_top, max_ticks=5):
     """Ticks of a rescaled sector (scale_UB): 1L, then the multiples of a
     "round" step (1, 2, 2.5, 5 x 10^k) between 1L (excluded) and rel_top
-    (included, in multiples of the Safe Limit, ACTUAL values -- before
+    (included, in multiples of the Safe Boundary, ACTUAL values -- before
     _scale_rel), with at most ~max_ticks ticks above 1L."""
     span = rel_top - 1
     if not np.isfinite(rel_top) or span <= 0:
@@ -224,73 +221,26 @@ def _regular_radial_ticks(rel_top, max_ticks=5):
 # ============================================================================
 
 
-def _stack_segments(payload, categories, threshold_ref, group_by_category,
-                     show_categories, show_import_split, fallback_color):
-    """Break down the CBA footprint of an (LP, scenario) into stackable
-    segments, in units relative to threshold_ref (Safe Limit), ready to draw
-    (color already resolved). to_r() must be applied by the caller to the
-    cumulative BOUNDS (not to the height of the segment), the only way to stay
-    correct on a non-linear scale (radial_power != 1).
-
-    show_categories/show_import_split control the styling, independently:
-      - both True: 1 segment per (category, dom/imp), colored by category
-        (like create_stacked_bar_chart), hatched if imported.
-      - show_categories=True, show_import_split=False: 1 segment per category
-        (dom+imp merged), colored by category, never hatched.
-      - show_categories=False, show_import_split=True: 2 segments (all
-        domestic, all imported), colored with fallback_color (LP color), the
-        2nd hatched.
-      - both False: a single segment (total), colored with fallback_color --
-        visually identical to a PBA bar.
+def _stack_segments(payload, categories, boundary_ref, color):
+    """CBA footprint of an (LP, scenario) as a single solid segment (domestic +
+    imported, all categories merged), in units relative to boundary_ref (Safe
+    Boundary). to_r() must be applied by the caller to the BOUNDS of the
+    segment (not to its height), the only way to stay correct on a non-linear
+    scale (radial_power != 1).
 
     Returns:
-        list of (rel_bottom, rel_top, color, is_import), in stacking order
-        (dom then imp per group if group_by_category, otherwise all dom then
-        all imp -- irrelevant if show_import_split=False).
+        list of (rel_bottom, rel_top, color) -- empty if there is no value.
     """
-    if payload is None or threshold_ref is None:
+    if payload is None or boundary_ref is None:
         return []
 
-    def value_for(key, category):
-        return payload[key].get(category, 0) if key in payload else 0
-
-    groups = list(enumerate(categories)) if show_categories else [(0, None)]
-
-    def dom_imp(category):
-        if category is not None:
-            return value_for(DOMESTIC, category), value_for(IMPORTED, category)
-        return (sum(value_for(DOMESTIC, c) for c in categories),
-                sum(value_for(IMPORTED, c) for c in categories))
-
-    entries = [(cat_idx, category, *dom_imp(category)) for cat_idx, category in groups]
-
-    order = []  # (cat_idx, category, absolute_value, is_import)
-    if not show_import_split:
-        for cat_idx, category, dom_val, imp_val in entries:
-            order.append((cat_idx, category, dom_val + imp_val, False))
-    elif group_by_category:
-        for cat_idx, category, dom_val, imp_val in entries:
-            order.append((cat_idx, category, dom_val, False))
-            order.append((cat_idx, category, imp_val, True))
-    else:
-        for cat_idx, category, dom_val, imp_val in entries:
-            order.append((cat_idx, category, dom_val, False))
-        for cat_idx, category, dom_val, imp_val in entries:
-            order.append((cat_idx, category, imp_val, True))
-
-    segments = []
-    cumulative = 0.0
-    for cat_idx, category, abs_val, is_import in order:
-        rel_val = abs_val / threshold_ref
-        if rel_val > 0:
-            color = colors.get_dark_shade(colors.get_category_color(category, cat_idx)) if show_categories else fallback_color
-            segments.append((cumulative, cumulative + rel_val, color, is_import))
-        cumulative += rel_val
-    return segments
+    total = sum(payload[key].get(c, 0) for key in (DOMESTIC, IMPORTED) if key in payload for c in categories)
+    rel_val = total / boundary_ref
+    return [(0.0, rel_val, color)] if rel_val > 0 else []
 
 
 def _annotate(val, ref_val, is_reference, is_pba=False):
-    """Same text rule as create_synthesis_figure_by_lp: absolute value in bold
+    """Same text rule as create_footprint_decomposition: absolute value in bold
     black for the reference scenario, colored % variation (red = increase,
     green = decrease) for the others. PBA uses a full red/green (more saturated
     than the lightcoral/lightgreen of the CBA) to stay readable despite the
@@ -307,7 +257,7 @@ def _annotate(val, ref_val, is_reference, is_pba=False):
 
 
 def _format_overshoot(rel):
-    """Overshoot level of the Safe Limit, e.g. 2.23 -> "x2.2"."""
+    """Overshoot level of the Safe Boundary, e.g. 2.23 -> "x2.2"."""
     return f"x{rel:.1f}"
 
 
@@ -325,12 +275,11 @@ def _bdf_column(bdf_df, indicator_name):
 # ============================================================================
 
 
-def create_radial_synthesis_figure(
-    all_scenarios_data, thresholds_df, scenario_names,
+def create_radial_synthesis(
+    all_scenarios_data, boundaries_df, scenario_names,
     show_cba=True, show_pba=True,
     dls_df=None, show_dls=False,
     radial_power=0.5,
-    show_categories=True, show_import_split=True, group_by_category=False,
     lp_colors=None,
     r_max=None,
     display_bounds=True,
@@ -340,18 +289,19 @@ def create_radial_synthesis_figure(
     scale_UB=False, scale_diff=False,
     scenario_group=None,
     Bdf=None,
+    excel_path=None,
 ):
     """Radial wheel: 1 sector per LP, 1 bar per scenario, height = value /
-    Safe Limit. The Safe Limit circle (green, historical threshold
-    config.THRESHOLD_LB_ABS) is therefore at a constant radius = 1L over the
-    whole figure; the Upper Safe Bound arc (red, config.THRESHOLD_UB_ABS) and
-    the Lower Safe Bound arc (light green, config.THRESHOLD_LOWER_ABS, always
-    below the Safe Limit) are specific to each sector (their ratio to the Safe
+    Safe Boundary. The Safe Boundary circle (green, historical boundary
+    config.BOUNDARY_LB_ABS) is therefore at a constant radius = 1L over the
+    whole figure; the High-Risk Boundary arc (red, config.BOUNDARY_UB_ABS) and
+    the Lower Safe Boundary arc (light green, config.BOUNDARY_LOWER_ABS, always
+    below the Safe Boundary) are specific to each sector (their ratio to the Safe
     Limit varies with the LP) -- these 3 names take the "raw" rows of
-    thresholds.xlsx/sheet "All" ("Lower safe bound"/"Safe limit"/"Upper safe
-    bound"). display_bounds=False hides Lower Safe Bound and Upper Safe Bound
-    (only the Safe Limit circle remains). Outer ring: 1 sub-band per scenario;
-    overshoot level of the Safe Limit for the reference scenario (e.g. "x2.2",
+    boundaries_values.xlsx/sheet "All" ("Lower Safe Boundary"/"Safe Boundary"/"Upper safe
+    bound"). display_bounds=False hides Lower Safe Boundary and High-Risk Boundary
+    (only the Safe Boundary circle remains). Outer ring: 1 sub-band per scenario;
+    overshoot level of the Safe Boundary for the reference scenario (e.g. "x2.2",
     legend "x2 = Overshoot"), % variation relative to it for the others.
 
     Args:
@@ -359,8 +309,7 @@ def create_radial_synthesis_figure(
             one item per scenario, in the order of scenario_names.
         show_cba, show_pba: which accountings to display (at least one of the
             two must be True):
-            - show_cba alone: stackable bar, see show_categories/
-              show_import_split.
+            - show_cba alone: solid bar, LP color.
             - show_pba alone: solid bar (a single scalar value exists in the
               source data, no breakdown by category/origin is ever possible),
               light shade of the LP color.
@@ -371,26 +320,14 @@ def create_radial_synthesis_figure(
             - only one of the two displayed ("solo" figure): the solid/light
               shades no longer distinguish CBA/PBA (redundant, there is only
               one) but the reference scenario (base_year, solid shade) from
-              the other scenarios (light shade), for any cell where
-              show_categories does not already take over (see below).
-        show_categories: (CBA only) True = stacks 1 segment per consumption
-            category, colored like create_stacked_bar_chart (the base_year/
-            other scenarios distinction remains visible in the outer ring, but
-            no longer in the segments themselves). False = no category
-            distinction; the bar then takes the LP color, shaded by scenario
-            as described above.
-        show_import_split: (CBA only) True = distinguishes domestic (solid) /
-            imported (hatched). False = domestic + imported merged into the
-            same segment.
-        group_by_category: see create_stacked_bar_chart -- only relevant if
-            show_categories=True and show_import_split=True (dom/imp stacking
-            order interleaved by category, or all dom then all imp).
+              the other scenarios (light shade).
         show_dls, dls_df: if show_dls=True, adds per sector the DLS (social
             floor), DLS lower bound and DLS upper bound arcs (shades of blue,
             light -> dark), when dls_df provides a value for this LP: national
             values read as is in the DLS sheet (see processing.lookup_dls).
-            "DLS ..." rows if scenario_group is DLS_BASE_YEAR_GROUP
-            ("Base_year"), "DLS 2050 ..." otherwise.
+            "DLS ..." rows for the base-year scenarios
+            (config.is_base_year_scenario: 2015, 2019, Base_year_2015,
+            2019_FR...), "DLS 2050 ..." for the others.
         scenario_group: displayed scenario group (config.get_scenario_folders),
             only used to choose the DLS rows (see show_dls) and the BdF file.
         radial_power: exponent of the transformation radius = (value/LB)**radial_power.
@@ -399,7 +336,7 @@ def create_radial_synthesis_figure(
             below their limit (e.g. Blue water consumption, <1L) are stretched
             outwards and therefore more visible, while the LPs in large
             overshoot (e.g. GHG emissions) are all the more compressed -- same
-            principle as sqrt, more pronounced. The Safe Limit circle stays at
+            principle as sqrt, more pronounced. The Safe Boundary circle stays at
             a constant radius (=1) whatever the value, since 1 raised to any
             power is always 1.
             Whatever its value, with scale_diff=True the radial ceiling is
@@ -407,40 +344,40 @@ def create_radial_synthesis_figure(
         lp_colors: optional dict to override/extend LP_COLORS.
         r_max: optional ceiling of the radial axis, in multiples of the Safe
             Limit (same unit as the "NL" ticks); None = computed automatically
-            from the data (values + displayed thresholds -- Upper/Lower Safe
+            from the data (values + displayed boundaries -- Upper/Lower Safe
             Bound if display_bounds=True, DLS if show_dls=True), capped at
             SCALE_DIFF_CAP_REL if scale_diff=True. With scale_diff=True, any
             bar exceeding the ceiling is truncated at the outer circle, with
-            its actual level (e.g. "16L") written at its top; the threshold
+            its actual level (e.g. "16L") written at its top; the boundary
             arcs beyond the ceiling are not drawn.
-        display_bounds: True (default) displays the Lower Safe Bound and Upper
-            Safe Bound arcs in addition to the Safe Limit circle (always
+        display_bounds: True (default) displays the Lower Safe Boundary and Upper
+            Safe Bound arcs in addition to the Safe Boundary circle (always
             displayed). False hides them (and no longer counts them in the
             computation of r_max).
         title: figure title (e.g. "Planetary boundaries assessment of French
             NZE Scenarios").
-        sharing_principle: None (default) = thresholds read as is in
-            thresholds_df ("Equality (Lower bound)"/"Equality"/"Equality (Upper
+        sharing_principle: None (default) = boundaries read as is in
+            boundaries_df ("Equality (Lower bound)"/"Equality"/"Equality (Upper
             bound)" rows). "EPC": France budget = world budget ("Lower safe
-            bound"/"Safe limit"/"Upper safe bound") x share of the "FR" row of
+            bound"/"Safe Boundary"/"High-Risk Boundary") x share of the "FR" row of
             budget_shares.xlsx, column "UN – EPC 2050" ("UN – EPC 2019-2100"
             for GHG emissions) -- see config.radial_epc_pattern. "CTR": same
             with the "CTR share ref. ..." column.
         shares_df: shares of budget_shares.xlsx (io.load_budget_shares_df),
             used for "EPC"/"CTR"; loaded automatically if None.
         scale_UB: if False (default), common scale for all the sectors, in
-            multiples of the Safe Limit (1L, 2L, 3L...). If True (same principle
-            as plot_overshoot.create_overshoot_safe_space_figure_by_region), the
+            multiples of the Safe Boundary (1L, 2L, 3L...). If True (same principle
+            as plot_overshoot.create_multi_regions_synthesis), the
             scale of each sector is specific to its LP, piecewise linear (before
-            radial_power): unchanged between 0 and the Safe Limit (1L), then
-            stretched or compressed so that the Upper Safe Bound falls exactly
-            on UB_SCALED_REL (2L); beyond, the slope of the [Safe Limit, UB]
+            radial_power): unchanged between 0 and the Safe Boundary (1L), then
+            stretched or compressed so that the High-Risk Boundary falls exactly
+            on UB_SCALED_REL (2L); beyond, the slope of the [Safe Boundary, UB]
             segment is extended. The figure then shows two continuous
-            concentric circles: Safe Limit (green) and Upper Safe Bound (red,
-            if display_bounds=True). Bars, Lower Safe Bound and DLS follow this
+            concentric circles: Safe Boundary (green) and High-Risk Boundary (red,
+            if display_bounds=True). Bars, Lower Safe Boundary and DLS follow this
             scale. The "NL" ticks beyond 1L, which no longer have a common
-            meaning, are hidden. A sector without Upper Safe Bound (or with UB
-            <= Safe Limit) keeps the 1L scale.
+            meaning, are hidden. A sector without High-Risk Boundary (or with UB
+            <= Safe Boundary) keeps the 1L scale.
         scale_diff: False (default) = classic display, common scale up to the
             highest point of the figure. True = radial ceiling capped at
             SCALE_DIFF_CAP_REL (6L): the bars exceeding it go up to the outer
@@ -452,15 +389,15 @@ def create_radial_synthesis_figure(
             scenarios are replaced by the aggregate value ("Average" row, in
             1st position, solid shade) then the household categories of the 1st
             column of this sheet (light shade), 1 solid bar each, of height =
-            pressure of the category / (national Safe Limit x weight) -- each
+            pressure of the category / (national Safe Boundary x weight) -- each
             category gets the "weight" share of the national budget. Upper/Lower
             Safe Bound and DLS being weighted by the same weight, their ratio
-            to the Safe Limit is unchanged: the arcs remain common to the
+            to the Safe Boundary is unchanged: the arcs remain common to the
             whole sector. The outer ring displays for the Total its overshoot
-            level of the Safe Limit (e.g. "x2.2", legend "x2 = Overshoot") and,
+            level of the Safe Boundary (e.g. "x2.2", legend "x2 = Overshoot") and,
             for each category, the relative variation of its overshoot (bar
             height) relative to that of the Total (e.g. +20%). show_cba/
-            show_pba, show_categories/show_import_split and the sorting of the
+            show_pba and the sorting of the
             scenarios are ignored; all_scenarios_data only sets the list/order
             of the LPs (reference scenario).
             If the folder of the scenario_group group contains 2 scenarios
@@ -472,6 +409,12 @@ def create_radial_synthesis_figure(
             if it is lower (legend "Base year"). show_dls then draws the central
             base-year DLS ("DLS Base year") and the DLS 2050 (darker blue)
             instead of the 3 DLS levels. False is equivalent to None.
+        excel_path: if given, Excel workbook of the plotted data (see
+            figure_export): "Values" (absolute value, ratio to the Safe Boundary
+            and variation vs the reference, by indicator x scenario x
+            accounting -- or x household category with Bdf), "Boundaries"
+            (absolute boundaries of France) and, if the CBA is shown,
+            "Footprint" (CBA by consumption category and origin).
 
     Returns:
         (fig, ax)
@@ -525,20 +468,33 @@ def create_radial_synthesis_figure(
     bdf_compare = is_bdf and comp_df is not None
 
     # DLS levels drawn: (key, row of the DLS sheet, color, label, scope).
+    # The DLS rows depend on each scenario, not on the group: "DLS ..." for the
+    # base-year scenarios (config.is_base_year_scenario: 2015, 2019,
+    # Base_year_2015, 2019_FR...), "DLS 2050 ..." for the others.
     # BdF comparison: central base-year DLS and DLS 2050; otherwise the 3 levels
-    # of config.DLS_LEVELS, "DLS ..." rows (base-year group) or "DLS 2050 ...".
-    # 5th item: bars covered by the arc ("all" = whole sector, "ref" = reference
-    # scenario only, "others" = all the other scenarios).
+    # of config.DLS_LEVELS when all the scenarios are of the same kind.
+    # 5th item: bars covered by the arc ("all" = whole sector, "base" = base-year
+    # scenarios only, "others" = the 2050 scenarios).
+    if is_bdf:
+        # The bars are household categories of one scenario: the kind is that
+        # of the scenario(s) of the group other than the comparison one
+        group_dir = config.get_group_dir(scenario_group) if scenario_group else None
+        group_scenarios = ([d.name for d in group_dir.iterdir() if config._is_scenario_folder(d)]
+                           if group_dir is not None else [])
+        main = [s for s in group_scenarios if not config.is_base_year_scenario(s)] if bdf_compare else group_scenarios
+        base_idx = set(range(len(scenario_names))) if main and all(
+            config.is_base_year_scenario(s) for s in main) else set()
+    else:
+        base_idx = {i for i, name in enumerate(scenario_names) if config.is_base_year_scenario(name)}
     if bdf_compare:
         dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "all"),
                       ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "all")]
-    elif not is_bdf and scenario_group != config.DLS_BASE_YEAR_GROUP:
-        # 2050 multi-scenario: base-year DLS on the Base year bar only, DLS 2050
-        # on the other scenarios.
-        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "ref"),
+    elif 0 < len(base_idx) < len(scenario_names):
+        # Mixed: base-year DLS on the base-year bars, DLS 2050 on the others.
+        dls_levels = [("dls_base", "DLS", config.DLS_COLOR, "DLS Base year", "base"),
                       ("dls_2050", "DLS 2050", config.DLS_2050_COLOR, "DLS 2050", "others")]
     else:
-        is_base_year = scenario_group == config.DLS_BASE_YEAR_GROUP
+        is_base_year = len(base_idx) == len(scenario_names)
         dls_prefix = "DLS" if is_base_year else "DLS 2050"
         # Legend label specifying the DLS horizon ("DLS Base year ..." /
         # "DLS 2050 ...") instead of the generic "DLS" prefix.
@@ -562,10 +518,9 @@ def create_radial_synthesis_figure(
 
     geo = _wedge_geometry(n_lp, n_slots)
 
-    # FIRST PASS: values, thresholds, unit and categories by LP (and maximum
-    # radius needed to encompass values + displayed UB/DLS thresholds)
+    # FIRST PASS: values, boundaries, unit and categories by LP (and maximum
+    # radius needed to encompass values + displayed UB/DLS boundaries)
     lp_info = []
-    legend_categories = set()
     max_rel = 1.0
     is_share = sharing_principle is not None
     if is_share:
@@ -582,7 +537,7 @@ def create_radial_synthesis_figure(
                         f"budget_shares.xlsx (\"UN – EPC\" columns)."
                     )
 
-    def threshold(threshold_row, threshold_kind, indicator_name):
+    def boundary(boundary_row, boundary_kind, indicator_name):
         if is_share:
             # France budget = world budget x share of the "FR" row: UN EPC
             # ("UN – EPC 2050", or 2019-2100 for GHG, see config.radial_epc_pattern)
@@ -590,16 +545,16 @@ def create_radial_synthesis_figure(
             column_pattern = (config.radial_epc_pattern(indicator_name)
                               if sharing_principle == "EPC" else None)
             return processing.compute_region_budget(
-                thresholds_df, shares_df, indicator_name, config.RADIAL_EPC_REGION_CODE, sharing_principle,
-                threshold_kind=threshold_kind, column_pattern=column_pattern,
+                boundaries_df, shares_df, indicator_name, config.RADIAL_EPC_REGION_CODE, sharing_principle,
+                boundary_kind=boundary_kind, column_pattern=column_pattern,
             )
-        return processing.lookup_threshold(thresholds_df, threshold_row, indicator_name)
+        return processing.lookup_boundary(boundaries_df, boundary_row, indicator_name)
 
     for indicator_name in indicators:
-        threshold_lb = threshold(config.THRESHOLD_LB_ABS, "lb", indicator_name)
-        threshold_ub = threshold(config.THRESHOLD_UB_ABS, "ub", indicator_name)
-        threshold_lower = threshold(config.THRESHOLD_LOWER_ABS, "lower", indicator_name)
-        unit_text = processing.lookup_first_text(thresholds_df, config.UNIT_ROW_ABS, indicator_name)
+        boundary_lb = boundary(config.BOUNDARY_LB_ABS, "lb", indicator_name)
+        boundary_ub = boundary(config.BOUNDARY_UB_ABS, "ub", indicator_name)
+        boundary_lower = boundary(config.BOUNDARY_LOWER_ABS, "lower", indicator_name)
+        unit_text = processing.lookup_first_text(boundaries_df, config.UNIT_ROW_ABS, indicator_name)
         # DLS (and its bounds), by key of config.DLS_LEVELS; None if missing for this LP
         dls_values = {key: None for key, *_ in dls_levels}
         if show_dls and dls_df is not None:
@@ -607,13 +562,12 @@ def create_radial_synthesis_figure(
                 dls_values[key] = processing.lookup_dls(dls_df, dls_row, indicator_name)
 
         categories = (first_scenario_data.get(indicator_name) or {}).get("categories", [])
-        legend_categories.update(categories)
 
         if is_bdf:
             # 1 value per household category (Total first).
             bdf_col = _bdf_column(bdf_df, indicator_name)
             values = [float(v) for v in bdf_df[bdf_col]] if bdf_col is not None else [None] * n_scenarios
-            # Thresholds specific to each category: national threshold x weight.
+            # Boundaries specific to each category: national boundary x weight.
             weights = bdf_weights
             scale_values = values
             if bdf_compare:
@@ -638,19 +592,19 @@ def create_radial_synthesis_figure(
             # displayed values only.
             scale_values = cba_values + pba_values
 
-        threshold_ref = threshold_lb
-        if threshold_ref is not None:
-            rel_values = [(v / (threshold_ref * w)) if v is not None else None for v, w in zip(values, weights)]
+        boundary_ref = boundary_lb
+        if boundary_ref is not None:
+            rel_values = [(v / (boundary_ref * w)) if v is not None else None for v, w in zip(values, weights)]
             scale_rel_values = (rel_values if is_bdf else
-                                [(v / threshold_ref) if v is not None else None for v in scale_values])
-            ub_rel = (threshold_ub / threshold_ref) if threshold_ub is not None else None
-            lb_rel = (threshold_lb / threshold_ref) if threshold_lb is not None else None
-            lower_rel = (threshold_lower / threshold_ref) if threshold_lower is not None else None
-            dls_rels = {key: (v / threshold_ref) if v is not None else None for key, v in dls_values.items()}
+                                [(v / boundary_ref) if v is not None else None for v in scale_values])
+            ub_rel = (boundary_ub / boundary_ref) if boundary_ub is not None else None
+            lb_rel = (boundary_lb / boundary_ref) if boundary_lb is not None else None
+            lower_rel = (boundary_lower / boundary_ref) if boundary_lower is not None else None
+            dls_rels = {key: (v / boundary_ref) if v is not None else None for key, v in dls_values.items()}
             if bdf_compare:
-                # Same normalization as the bars (national threshold x weight
+                # Same normalization as the bars (national boundary x weight
                 # of the category, read in the comparison file).
-                comp_rel_values = [(v / (threshold_ref * w)) if v is not None else None
+                comp_rel_values = [(v / (boundary_ref * w)) if v is not None else None
                                    for v, w in zip(comp_values, comp_weights)]
                 scale_rel_values = scale_rel_values + comp_rel_values
         else:
@@ -660,7 +614,7 @@ def create_radial_synthesis_figure(
             lb_rel = None
             lower_rel = None
             dls_rels = {key: None for key in dls_values}
-        if not bdf_compare or threshold_ref is None:
+        if not bdf_compare or boundary_ref is None:
             comp_rel_values = [None] * n_scenarios
 
         # scale_UB: slope specific to the sector (None = unchanged 1L scale).
@@ -674,10 +628,17 @@ def create_radial_synthesis_figure(
                 max_rel = max(max_rel, _scale_rel(rel, slope))
 
         lp_info.append(dict(
-            name=indicator_name, unit=unit_text, threshold_ref=threshold_ref, categories=categories,
+            name=indicator_name, unit=unit_text, boundary_ref=boundary_ref, categories=categories,
             values=values, rel_values=rel_values, ub_rel=ub_rel, lb_rel=lb_rel, lower_rel=lower_rel,
             dls_rels=dls_rels, slope=slope, ub_slope=slope, comp_rel_values=comp_rel_values,
             color=palette.get(indicator_name, _FALLBACK_LP_COLOR),
+            # Absolute values, for the Excel export (excel_path)
+            boundaries={"Lower Safe Boundary": boundary_lower, "Safe Boundary": boundary_lb,
+                        "High-Risk Boundary": boundary_ub},
+            dls_values=dls_values,
+            cba_values=None if is_bdf else cba_values,
+            pba_values=None if is_bdf else pba_values,
+            comp_values=comp_values if bdf_compare else None,
         ))
 
     if r_max is not None:
@@ -698,7 +659,7 @@ def create_radial_synthesis_figure(
         return to_r(min(_scale_rel(rel, info["slope"]), rel_cap))
 
     # The radial ceiling is set just above (RADIAL_AXIS_MARGIN_FRAC) the
-    # highest relative value (bar or displayed UB/LB/DLS threshold), so that the
+    # highest relative value (bar or displayed UB/LB/DLS boundary), so that the
     # outer ring starts very close to the actual top -- not at the rounding up
     # to the next whole L, which could leave up to 1L of dead space. The "NL"
     # ticks remain integer multiples (up to the last one <= this actual top).
@@ -748,7 +709,7 @@ def create_radial_synthesis_figure(
     if not scale_UB:
         for t in rel_ticks:
             if t == 1:
-                continue  # drawn separately, in bold, as the Safe Limit circle
+                continue  # drawn separately, in bold, as the Safe Boundary circle
             ax.plot(theta_full, np.full_like(theta_full, to_r(t)), color="#e0e0e0", linewidth=0.7, zorder=1)
 
     for lp_idx, b in enumerate(geo["boundaries"]):
@@ -773,11 +734,6 @@ def create_radial_synthesis_figure(
         bar_width = geo["bar_width"]
         ring_centers = geo["ring_centers"][lp_idx]
 
-        def _bar_hatch(is_import=False):
-            # "/" hatching for the imported part only (the reference scenario
-            # is no longer hatched, see _solo_color).
-            return "/" if is_import else None
-
         # PBA: always in a lighter shade of the LP color.
         pba_color = colors.get_light_shade(info["color"], 1.5)
 
@@ -793,13 +749,11 @@ def create_radial_synthesis_figure(
         def _draw_cba_bar(theta, scenario_idx):
             payload = all_scenarios_data[scenario_idx].get(info["name"])
             fallback_color = info["color"] if combined else _solo_color(scenario_idx)
-            segments = _stack_segments(payload, info["categories"], info["threshold_ref"], group_by_category,
-                                        show_categories, show_import_split, fallback_color)
-            for rel_bottom, rel_top, color, is_import in segments:
+            segments = _stack_segments(payload, info["categories"], info["boundary_ref"], fallback_color)
+            for rel_bottom, rel_top, color in segments:
                 ax.bar([theta], [r_of(info, rel_top) - r_of(info, rel_bottom)], width=bar_width,
                        bottom=r_of(info, rel_bottom),
-                       color=color, edgecolor="white", linewidth=0.4,
-                       hatch=_bar_hatch(is_import), zorder=5)
+                       color=color, edgecolor="white", linewidth=0.4, zorder=5)
 
         if combined:
             # 2 adjacent bars per scenario -- CBA (stacked like _draw_cba_bar)
@@ -812,12 +766,10 @@ def create_radial_synthesis_figure(
                 ax.bar([theta], [height], width=bar_width, bottom=0.0,
                        color=pba_color, edgecolor="white", linewidth=0.6, zorder=5)
         elif show_cba and not is_bdf:
-            # Detailed footprint available (domestic/imported by category): bar
-            # stacked according to show_categories/show_import_split (both
-            # False -> 1 solid segment, colored by _solo_color). to_r() is
-            # applied to the cumulative BOUNDS (not to the height of the
-            # segment), the only correct way to stay consistent with the LB
-            # circle/UB arc on a non-linear scale (radial_power != 1).
+            # CBA alone: 1 solid segment, colored by _solo_color. to_r() is
+            # applied to the BOUNDS of the segment (not to its height), the
+            # only correct way to stay consistent with the LB circle/UB arc
+            # on a non-linear scale (radial_power != 1).
             for scenario_idx, theta in enumerate(centers):
                 _draw_cba_bar(theta, scenario_idx)
         else:
@@ -880,7 +832,7 @@ def create_radial_synthesis_figure(
                 continue
             if is_ref_by_slot[i]:
                 # Reference scenario (BdF: Total), CBA and PBA in combined mode:
-                # overshoot level of the Safe Limit (1L), e.g. "x2.2", rather
+                # overshoot level of the Safe Boundary (1L), e.g. "x2.2", rather
                 # than the absolute value (legend "x2 = Overshoot").
                 rel = info["rel_values"][i]
                 if rel is None:
@@ -888,7 +840,7 @@ def create_radial_synthesis_figure(
                 text, color = _format_overshoot(rel), "black"
             elif is_bdf:
                 # Relative variation of the overshoot (pressure / weighted
-                # threshold) of the category compared with that of the
+                # boundary) of the category compared with that of the
                 # aggregate value.
                 text, color = _annotate(info["rel_values"][i], info["rel_values"][reference_idx], False, True)
             else:
@@ -921,7 +873,7 @@ def create_radial_synthesis_figure(
 
         if (display_bounds and info["ub_rel"] is not None and info["ub_slope"] is None
                 and not is_clipped(info, info["ub_rel"])):
-            # Rescaled sector (scale_UB): its Upper Safe Bound is drawn further
+            # Rescaled sector (scale_UB): its High-Risk Boundary is drawn further
             # down, with the continuous circle at UB_SCALED_REL.
             theta_arc = np.linspace(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"], 40)
             ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, info["ub_rel"])), color=UB_COLOR,
@@ -935,8 +887,8 @@ def create_radial_synthesis_figure(
         # DLS arcs: the whole usable sector, except in combined mode where they
         # only cover the CBA bars (the DLS is a consumption floor, irrelevant
         # for the adjacent PBA bar).
-        # Scope "ref"/"others": arc limited to the bars of the reference
-        # scenario or of the other scenarios (CBA bars only in combined mode).
+        # Scope "base"/"others": arc limited to the bars of the base-year
+        # scenarios or of the 2050 scenarios (CBA bars only in combined mode).
         cba_centers = centers[0::2] if combined else centers
         for key, _, dls_color, _, scope in dls_levels:
             dls_rel = info["dls_rels"][key]
@@ -944,19 +896,21 @@ def create_radial_synthesis_figure(
                 continue
             if scope == "all" and not combined:
                 dls_spans = [(geo["starts"][lp_idx], geo["starts"][lp_idx] + geo["usable_span"])]
-            elif scope == "ref":
+            elif scope == "base":
                 # Widened arc: from the edge of the sector (or of the neighboring
-                # bar) up to the next bar, on both sides of the Base year bar.
-                slot = reference_idx * 2 if combined else reference_idx
+                # bar) up to the next bar, on both sides of each base-year bar.
+                dls_spans = []
                 sector_start = geo["boundaries"][lp_idx]
-                theta_start = (centers[slot - 1] + bar_width / 2) if slot > 0 else sector_start
-                theta_end = ((centers[slot + 1] - bar_width / 2) if slot + 1 < len(centers)
-                             else sector_start + geo["wedge_span"])
-                dls_spans = [(theta_start, theta_end)]
+                for scenario_idx in sorted(base_idx):
+                    slot = scenario_idx * 2 if combined else scenario_idx
+                    theta_start = (centers[slot - 1] + bar_width / 2) if slot > 0 else sector_start
+                    theta_end = ((centers[slot + 1] - bar_width / 2) if slot + 1 < len(centers)
+                                 else sector_start + geo["wedge_span"])
+                    dls_spans.append((theta_start, theta_end))
             else:
                 dls_spans = [(theta - bar_width / 2, theta + bar_width / 2)
                              for scenario_idx, theta in enumerate(cba_centers)
-                             if scope == "all" or (scenario_idx == reference_idx) == (scope == "ref")]
+                             if scope == "all" or scenario_idx not in base_idx]
             for theta_start, theta_end in dls_spans:
                 theta_arc = np.linspace(theta_start, theta_end, 40)
                 ax.plot(theta_arc, np.full_like(theta_arc, r_of(info, dls_rel)), color=dls_color,
@@ -969,12 +923,12 @@ def create_radial_synthesis_figure(
                        rotation=_tangential_rotation_deg(bisector), rotation_mode="anchor", zorder=9)
         txt.set_path_effects([pe.withStroke(linewidth=3, foreground="white")])
 
-    # Safe Limit "1L" circle: constant radius = 1 (fixed point of to_r, whatever
+    # Safe Boundary "1L" circle: constant radius = 1 (fixed point of to_r, whatever
     # radial_power), drawn above the bars.
     ax.plot(theta_full, np.full_like(theta_full, to_r(1.0)), color=LB_COLOR, linewidth=3.2, zorder=8)
     for lp_idx, info in enumerate(lp_info):
         theta_arc = np.linspace(geo["boundaries"][lp_idx], geo["boundaries"][lp_idx] + geo["wedge_span"], 40)
-        # scale_UB: second concentric circle, Upper Safe Bound brought to
+        # scale_UB: second concentric circle, High-Risk Boundary brought to
         # UB_SCALED_REL in each rescaled sector -- arcs tiling the whole
         # wedge_span to form a continuous circle.
         if display_bounds and info["ub_slope"] is not None:
@@ -984,33 +938,19 @@ def create_radial_synthesis_figure(
     r_axis_max = (r_scenario_label + ring_thickness * 0.6) if has_scenario_labels else (r_ring_end * 1.02)
     ax.set_rlim(0, r_axis_max)
 
-    # Legend: threshold lines common to both figures, then the categories if
-    # displayed (CBA with show_categories=True -- explains the styling of the
-    # stacked bars) and/or the "Import" entry alone if the dom/imp distinction
-    # is displayed without the categories.
-    legend_handles = [Line2D([0], [0], color=LB_COLOR, linewidth=3, label="Safe Limit")]
+    # Legend: boundary lines common to both figures (the bars are solid, one
+    # color per LP: nothing else to explain).
+    legend_handles = [Line2D([0], [0], color=LB_COLOR, linewidth=3, label="Safe Boundary")]
     if display_bounds:
         legend_handles = [
-            Line2D([0], [0], color=LOWER_COLOR, linewidth=3, label="Lower Safe Bound"),
+            Line2D([0], [0], color=LOWER_COLOR, linewidth=3, label="Lower Safe Boundary"),
             *legend_handles,
-            Line2D([0], [0], color=UB_COLOR, linewidth=3, label="Upper Safe Bound"),
+            Line2D([0], [0], color=UB_COLOR, linewidth=3, label="High-Risk Boundary"),
         ]
     if show_dls:
         for key, _, dls_color, dls_label, _ in dls_levels:
             if any(info["dls_rels"][key] is not None for info in lp_info):
                 legend_handles.append(Line2D([0], [0], color=dls_color, linestyle="--", linewidth=3, label=dls_label))
-
-    if is_bdf:
-        pass  # solid bars, one color per LP: nothing to explain beyond the thresholds
-    elif show_cba and show_categories:
-        cat_handles, cat_labels = _build_category_legend(colors.sort_categories(list(legend_categories)))
-        if not show_import_split:
-            cat_handles, cat_labels = cat_handles[:-1], cat_labels[:-1]  # drop "Import": no hatching drawn
-        for h, lbl in zip(cat_handles, cat_labels):
-            h.set_label(lbl)
-        legend_handles += cat_handles
-    elif show_cba and show_import_split:
-        legend_handles.append(Patch(facecolor="white", edgecolor="black", hatch="///", linewidth=1, label="Import"))
 
     if combined:
         # Generic marker (neutral grey) for the light shade of the PBA, valid
@@ -1030,9 +970,9 @@ def create_radial_synthesis_figure(
         legend_handles.append(Patch(facecolor=colors.get_light_shade("#888888", 1.5), edgecolor="#333333", label="Other scenarios"))
 
     # Cell of the reference scenario (BdF: Total) in the outer ring: overshoot
-    # level of the Safe Limit (x2.2...)
+    # level of the Safe Boundary (x2.2...)
     legend_handles.append(Line2D([0], [0], linestyle="none", marker="$x2$", markersize=18,
-                                 color="black", label="Overshoot of Safe Limit (1L)"))
+                                 color="black", label="Overshoot of Safe Boundary (1L)"))
 
     # Relative variation of the footprints
     if is_bdf:
@@ -1057,4 +997,86 @@ def create_radial_synthesis_figure(
 
     fig.suptitle(title, fontsize=18, fontweight="bold", y=0.975)
 
+    if excel_path is not None:
+        _export_radial_excel(
+            excel_path, lp_info, scenario_names, all_scenarios_data, boundaries_df, reference_idx,
+            show_cba=show_cba, show_pba=show_pba, is_bdf=is_bdf, dls_levels=dls_levels,
+            bdf_weights=bdf_weights if is_bdf else None, comp_weights=comp_weights if bdf_compare else None,
+            about={
+                "Figure": title or "Radial synthesis",
+                "Generated by": "planefr_lib.plot_radial_synthesis.create_radial_synthesis",
+                "Accounting": " + ".join(name for name, shown in (("Consumption-based (CBA)", show_cba),
+                                                                  ("Production-based (PBA)", show_pba)) if shown),
+                "Scenario group": scenario_group,
+                "Household breakdown (BdF sheet)": Bdf if is_bdf else None,
+                "Reference": scenario_names[reference_idx],
+                "Order (as on the wheel)": ", ".join(str(n) for n in scenario_names),
+                "Unit": "Unit column (\"Figures unit\" of boundaries_values.xlsx)",
+                "Ratio to the Safe Boundary": "Height of the bars: value / Safe Boundary of France (1L = Safe Boundary)"
+                                           + (" x weight of the household category" if is_bdf else ""),
+                "Boundaries": _boundaries_note(sharing_principle, "radial"),
+                "DLS": ("Decent living standards, DLS sheet of boundaries_values.xlsx (national values)"
+                        if show_dls and dls_df is not None else None),
+            },
+        )
+
     return fig, ax
+
+
+def _export_radial_excel(excel_path, lp_info, scenario_names, all_scenarios_data, boundaries_df,
+                         reference_idx, show_cba, show_pba, is_bdf, dls_levels, bdf_weights, comp_weights,
+                         about):
+    """Excel workbook of create_radial_synthesis: "Values" (one row per
+    indicator x scenario x accounting, or x household category with Bdf),
+    "Boundaries" (absolute boundaries of France by indicator) and, if the CBA is
+    shown, "Footprint" (CBA broken down by consumption category and origin)."""
+    value_rows, boundary_rows = [], []
+    for info in lp_info:
+        name, unit, safe_boundary = info["name"], info["unit"] or "", info["boundary_ref"]
+        boundary_rows.append({
+            "Indicator": name, "Unit": unit,
+            **{label: figure_export.clean_value(v) for label, v in info["boundaries"].items()},
+            **{dls_label: figure_export.clean_value(info["dls_values"][key])
+               for key, _, _, dls_label, _ in dls_levels},
+        })
+        if is_bdf:
+            values = info["values"]
+            ref_rel = info["rel_values"][reference_idx]
+            for idx, category in enumerate(scenario_names):
+                rel = info["rel_values"][idx]
+                row = {
+                    "Indicator": name, "Unit": unit, "Household category": category,
+                    "Weight (share of the population)": figure_export.clean_value(bdf_weights[idx]),
+                    "Value": figure_export.clean_value(values[idx]),
+                    "Value / (Safe Boundary x weight) (L)": figure_export.clean_value(rel),
+                    "Variation vs average household (%)":
+                        None if idx == reference_idx else figure_export.variation_pct(rel, ref_rel),
+                }
+                if info["comp_values"] is not None:
+                    row["Base year value"] = figure_export.clean_value(info["comp_values"][idx])
+                    row["Base year value / (Safe Boundary x weight) (L)"] = figure_export.clean_value(
+                        info["comp_rel_values"][idx])
+                    row["Base year weight"] = figure_export.clean_value(comp_weights[idx])
+                value_rows.append(row)
+            continue
+        for accounting, shown, values in (("CBA", show_cba, info["cba_values"]),
+                                          ("PBA", show_pba, info["pba_values"])):
+            if not shown:
+                continue
+            for idx, scenario_name in enumerate(scenario_names):
+                value = values[idx]
+                value_rows.append({
+                    "Indicator": name, "Unit": unit, "Scenario": scenario_name, "Accounting": accounting,
+                    "Value": figure_export.clean_value(value),
+                    "Value / Safe Boundary (L)": figure_export.ratio(value, safe_boundary),
+                    "Variation vs reference scenario (%)":
+                        None if idx == reference_idx else figure_export.variation_pct(value, values[reference_idx]),
+                })
+
+    sheets = {"Values": value_rows, "Boundaries": boundary_rows}
+    if show_cba and not is_bdf:
+        indicators = [info["name"] for info in lp_info]
+        sheets["Footprint"] = [row for scenario_name, scenario_data in zip(scenario_names, all_scenarios_data)
+                               for row in figure_export.footprint_rows(scenario_name, scenario_data,
+                                                                       boundaries_df, indicators)]
+    figure_export.write_figure_excel(excel_path, sheets, about=about)

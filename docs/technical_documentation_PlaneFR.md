@@ -2,7 +2,7 @@
 
 This document describes the PlaneFR module, which assesses the environmental pressures of France against the planetary boundaries using the MatMat input-output model. 
 
-It describes the state of the code on 17 November 2026.
+It describes the state of the code on 18 November 2026.
 
 ## Contents
 
@@ -30,15 +30,15 @@ The computation relies on three building blocks, spread over three repositories:
 | Block | Repository | Role |
 |---|---|---|
 | Model | `matmat-ademe` (fork of MatMat) | Extracts the EXIOBASE accounts, builds the France accounts, applies the scenario shocks and computes the footprints. |
-| Post-processing | `Module_PlaneFR` | Converts the EXIOBASE extensions into planetary-boundary indicators, compares them with the thresholds and produces the figures. |
+| Post-processing | `Module_PlaneFR` | Converts the EXIOBASE extensions into planetary-boundary indicators, compares them with the boundaries and produces the figures. |
 | Households | `ademe_eemrio` | Splits the footprint between household categories, using the 2017 Budget de famille survey. |
 
 ### Indicators
 
 The code distinguishes two levels, which helps when reading the scripts:
 
-- the **extension** is the MatMat satellite account (`land`, `water`, `nutrients`…). In `planefr_lib` it is called `lp_name` and corresponds to the "EXIOBASE groups" column of `characterization_factors.xlsx`;
-- the **Indicator** is what is shown in the figures ("N surplus", "GHG emissions"…), i.e. the "Indicators" column of `characterization_factors.xlsx` and a column of `thresholds.xlsx`. An indicator can aggregate several extensions.
+- the **extension** is the MatMat satellite account (`land`, `water`, `nutrients`…). In `planefr_lib` it is called `lp_name` and corresponds to the "EXIOBASE groups" column of `indicator_computing.xlsx`;
+- the **Indicator** is what is shown in the figures ("N surplus", "GHG emissions"…), i.e. the "Indicators" column of `indicator_computing.xlsx` and a column of `boundaries_values.xlsx`. An indicator can aggregate several extensions.
 
 | Indicator | Extensions used | Figure unit |
 |---|---|---|
@@ -112,11 +112,11 @@ flowchart TD
     T2050["Transition(s) 2050 shocks<br/>dA, dY, dY_k"] --> ENGF["eeio engine, France"]
     MAN["Manual shocks<br/>my_manual_param.xlsx, dS"] --> ENGF
     FR --> ENGF
-    ENGF --> OUT["Results by scenario<br/>Module_PlaneFR/data/"]
+    ENGF --> OUT["Results by scenario<br/>Module_PlaneFR/data/Outputs_MatMat/"]
     WS --> REF["Reformatting scripts"]
     REF --> OUT
-    OUT --> LIB["planefr_lib<br/>footprints, thresholds, figures"]
-    PAR["Characterization factors,<br/>thresholds, budget shares"] --> LIB
+    OUT --> LIB["planefr_lib<br/>footprints, boundaries, figures"]
+    PAR["Characterization factors,<br/>boundaries, budget shares"] --> LIB
     OUT --> BDF["ademe_eemrio<br/>household breakdown"]
     BDF --> LIB
 ```
@@ -162,13 +162,16 @@ matmat-ademe/
 | `matmat-ademe/data/4-PlaneFR/1-accounts/` | EXIOBASE accounts in MatMat format | no |
 | `matmat-ademe/data/4-PlaneFR/2-shocks/` | Scenario shocks | no |
 | `matmat-ademe/data/4-PlaneFR/Outputs/`, `Outputs_inter/` | Computed accounts (World, France) and intermediate outputs | no |
-| `Module_PlaneFR/data/` | Post-processing parameters and model results by scenario | yes |
+| `Module_PlaneFR/data/Boundaries/` | Planetary boundaries (`boundaries_values.xlsx`), budget shares (`budget_shares.xlsx`, `budget_shares.py`) and their sources (`input_data/`) | yes |
+| `Module_PlaneFR/data/Input_Shocks_MatMat/` | Inputs of the shocks: `Matching_EXIOBASE_IMAGE.xlsx`, `S_extraction.xlsx`, IMAGE scenarios and `Nutrients.xlsx` (`input_data/`) | yes |
+| `Module_PlaneFR/data/Outputs_MatMat/` | Model results by scenario (`<version>/`), `scenario_groups.json` | yes |
+| `Module_PlaneFR/data/Post_processing/` | `indicator_computing.xlsx`, `bridge_matrices.xlsx`, `add_biodiversity_rows.py` and its source (`input_data/`) | yes |
 | `Module_PlaneFR/notebooks/planefr_lib/` | Post-processing library | yes |
 | `Module_PlaneFR/notebooks/*.ipynb` | Figure notebooks | yes |
-| `Module_PlaneFR/figures/` | Figures and workbooks produced | yes |
+| `Module_PlaneFR/figures/` | Figures and the Excel workbooks of their data, one sub-folder per notebook (§ 7.5) | yes |
 
 
-> **Possible improvement** `Module_PlaneFR` versions its model results (`data/3.11.2/`, about 8,800 pickles), which can all be regenerated. Git handles large binary files poorly: the repository grows at each run. Git LFS, or publishing the results separately (e.g. on Zenodo, as MatMat does), would keep it light.
+> **Possible improvement** `Module_PlaneFR` versions its model results (`data/Outputs_MatMat/3.11.2/`, about 8,800 pickles), which can all be regenerated. Git handles large binary files poorly: the repository grows at each run. Git LFS, or publishing the results separately (e.g. on Zenodo, as MatMat does), would keep it light.
 
 ---
 
@@ -180,7 +183,7 @@ The project uses four Python environments, because the repositories do not have 
 |---|---|---|---|
 | `matmat-ademe/.venv` (managed by `uv`) | 3.11 | pandas 2.2.2, pymrio 0.5.4, scipy 1.17.1 | Adapter, `gmrio_to_snac_s` pipeline, engine, Python pipeline scripts |
 | `datapack/.venv` (managed by `uv`) | 3.11 | wheel `matmat-0.9.0b0`, pandas 2.2.2 | `update_calib_fr` pipeline only |
-| Module_PlaneFR (`requirements.txt`) | 3.14 | pandas 3.0.1, matplotlib 3.10.8, pymrio 0.6.3, country_converter 1.3.2 | Notebooks, `planefr_lib`, `data/budget_shares.py` |
+| Module_PlaneFR (`requirements.txt`) | 3.14 | pandas 3.0.1, matplotlib 3.10.8, pymrio 0.6.3, country_converter 1.3.2 | Notebooks, `planefr_lib`, `data/Boundaries/budget_shares.py` |
 | ademe_eemrio (`py -3` launcher) | 3.x | pandas, openpyxl, jupyter, nbconvert | "Budget des familles" chain |
 
 The `update_calib_fr` pipeline does not exist in the public `matmat-ademe` repository: its `src/matmat/workflows/pipelines/accounts/` folder only contains `aggregation` and `gmrio_to_snac_s`. It is only available in the `matmat-0.9.0b0` wheel shipped with the `datapack`. The scripts therefore run this step from the `datapack` folder, while reading the settings of `matmat-ademe`.
@@ -211,13 +214,14 @@ The pipeline scripts contain no path specific to a machine, so the repository wo
 | `PARAMETERS_DIR` | `matmat-ademe/planeFR/parameters/` |
 | `MATMAT_DATA_DIR`, `PLANEFR_DATA_DIR` | `matmat-ademe/data/`, `matmat-ademe/data/4-PlaneFR/` |
 | `MODULE_PLANEFR_DIR` | `<root>/Module_PlaneFR/`, or the `PLANEFR_MODULE_DIR` environment variable |
-| `DATA_VERSION_DIR` | `Module_PlaneFR/data/<PLANEFR_EXIOBASE_VERSION>/` |
+| `MODULE_INPUT_SHOCKS_DIR`, `MODULE_OUTPUTS_DIR`, `MODULE_POST_PROCESSING_DIR` | `Module_PlaneFR/data/Input_Shocks_MatMat/`, `.../Outputs_MatMat/`, `.../Post_processing/` |
+| `DATA_VERSION_DIR` | `Module_PlaneFR/data/Outputs_MatMat/<PLANEFR_EXIOBASE_VERSION>/` |
 
 The only files holding machine-specific absolute paths are the two `config.toml` files (`data_dir`, `settings_dir`), which are local by design, and the settings files generated in `data/4-PlaneFR/Settings_run/` at each run.
 
 Each Python script of a step folder adds `_common` to its import path (`sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_common"))`), then imports `planefr_paths` and, if needed, `planefr_utils` (`make_pickle_portable`). `planefr_paths.get_ssp_base_accounts_dir()` gives the base accounts of the SSP shocks (§ 5.3). The pipeline command `0-chains/planefr.py` imports `_common/planefr_settings.py` the same way, and runs the other scripts by their path relative to `planeFR/scripts/`.
 
-`planefr_lib`, `data/budget_shares.py` and `ademe_eemrio` only use relative paths too, and assume the same tree of § 2: `planefr_lib.config.BDF_FILE` looks in `../Github/ademe_eemrio/`, and `export_impacts_coicop.py` looks in `../../Module_PlaneFR/notebooks`.
+`planefr_lib`, `data/Boundaries/budget_shares.py` and `ademe_eemrio` only use relative paths too, and assume the same tree of § 2: `planefr_lib.config.BDF_FILE` looks in `../Github/ademe_eemrio/`, and `export_impacts_coicop.py` looks in `../../Module_PlaneFR/notebooks`.
 
 ### Environment variables
 
@@ -226,8 +230,8 @@ Each Python script of a step folder adds `_common` to its import path (`sys.path
 | `PLANEFR_MODULE_DIR` | `<root>/Module_PlaneFR` | Location of `Module_PlaneFR`, if it is not next to the `MatMat` folder. Read by `_common/planefr_paths.py`. |
 | `PLANEFR_EXIOBASE_VERSION` | `3.11.2` | EXIOBASE version read by the Python pipeline scripts and by `planefr_lib.config`. Set by `planefr.py` from its `--version` option. |
 | `PLANEFR_SCENARIO_GROUP` | `no_SSP` | Scenario group read by default by `planefr_lib`. |
-| `PLANEFR_FIGURES_DIR` | `Module_PlaneFR/figures` | Output folder of the figures. Useful to test a notebook without overwriting the existing figures. |
-| `PLANEFR_SCENARIO` | `SSP2_19_Sus_2050/S1_2050` | Scenario processed by `export_impacts_coicop.py`. Set by `BdF.ps1`. |
+| `PLANEFR_FIGURES_DIR` | `Module_PlaneFR/figures` | Root folder of the figures (one sub-folder per notebook, `config.figure_dir`). Useful to test a notebook without overwriting the existing figures. |
+| `PLANEFR_SCENARIO` | `2050_raw/SSP2_19_Sus_2050/S1_2050` | Scenario processed by `export_impacts_coicop.py`, relative to `Outputs_MatMat/<version>/`. Set by `BdF.ps1` (`<group>/<name>`). |
 
 ---
 
@@ -390,7 +394,7 @@ Two chains each regenerate one set of shocks; a third computes all the output gr
 | `planefr.py france-shocks` | After a change to the French shocks: `my_manual_param.xlsx`, system shocks of `1-transitions_2050` | Steps 1b, 3 (`no_SSP` group only), 5 to 8 of § 5.2 | Base accounts |
 | `planefr.py ssp-shocks` | After a change to the SSP shocks: IMAGE scenarios, matching workbook, base year of the SSP shocks | § 5.3: shocks, then the rest of the world projected on them | Base accounts |
 | `planefr.py outputs` | To compute all the output groups (`no_SSP`, `<SSP>_2050`...) from the current shocks | § 5.4 | Both shock chains run at least once |
-| `planefr.py agri` | Agri-food variant of `outputs` | § 5.4: `_agri` shocks, rest of the world projected on them, then the `outputs` stages with the `_agri` suffix | Same as `outputs` |
+| `planefr.py agri` | Agri-food variant of `outputs` | § 5.4: `_agri` shocks, rest of the world projected on them, 2019 agri geographies (`regions_agri`), then the `outputs` stages with the `_agri` suffix | Same as `outputs` |
 
 After a change, run the shock chain(s) concerned, then `outputs` (and `agri` if needed). The simplest is to say what has changed; `planefr.py` then runs the matching chains:
 
@@ -400,20 +404,20 @@ After a change, run the shock chain(s) concerned, then `outputs` (and `agri` if 
 | `--RoW_shocks_change` | SSP shocks: IMAGE scenarios, matching workbook, base year of the SSP shocks | `ssp-shocks`, then `outputs --ssps` |
 | `--France_shocks_change` | System shocks of `1-transitions_2050` | `france-shocks`, then `outputs` |
 | `--France_shocks_dS_change` | `my_manual_param.xlsx` only | `france-shocks --manual-only`, then `outputs` |
-| `--Agri` | Agri-food variant wanted, from the current France and SSP shocks | `agri`: `_agri` shocks, rest of the world projected on them, then the `outputs` stages with the `_agri` suffix |
+| `--Agri` | Agri-food variant wanted, from the current France and SSP shocks | `agri`: `_agri` shocks, rest of the world projected on them, 2019 agri geographies (`regions_agri`), then the `outputs` stages with the `_agri` suffix |
 
 These options also take `--version`. `--Agri` alone reads the current shocks. To also update the agri-food variant after a change, combine it with the matching option rather than running both one after the other: only the `_agri` part affected by the change is recomputed, and the post-processing (`5-reformat`, `F_Y_tot` shocks, display groups) runs once for both variants.
 
 | Combination | Chains run |
 |---|---|
-| `--France_shocks_change --Agri` | `france-shocks`; `generate_shock_agri.py --only transitions` (`3-SSPs_2050_agri` and the `_agri` projected world, which only depend on the SSP shocks, are kept); France engine, then France engine `_agri`; post-processing |
+| `--France_shocks_change --Agri` | `france-shocks`; `generate_shock_agri.py --only transitions` (`3-SSPs_2050_agri` and the `_agri` projected world, which only depend on the SSP shocks, are kept); `regions_agri`; France engine, then France engine `_agri`; post-processing |
 | `--France_shocks_dS_change --Agri` | Same, with `france-shocks --manual-only` |
-| `--RoW_shocks_change --Agri` | `ssp-shocks`; `generate_shock_agri.py --only ssps`; rest of the world projected on the `_agri` SSP shocks; both France engines on the SSP groups only; post-processing |
-| `--All --Agri` | Base accounts, `france-shocks`, `ssp-shocks`; `generate_shock_agri.py`; `_agri` projected world; France engine `_agri`; post-processing |
+| `--RoW_shocks_change --Agri` | `ssp-shocks`; `generate_shock_agri.py --only ssps`; rest of the world projected on the `_agri` SSP shocks; `regions_agri`; both France engines on the SSP groups only; post-processing |
+| `--All --Agri` | Base accounts, `france-shocks`, `ssp-shocks`; `generate_shock_agri.py`; `_agri` projected world; `regions_agri`; France engine `_agri`; post-processing |
 
 **Selecting the outputs.** `--France` and `--RoW` restrict the final France engine to some outputs; they apply to `outputs`, `agri` and the options above. Names are those of the scenarios, without the `_agri` suffix, and the pairs generated are the combinations of both lists: `--France S1_2050 --RoW no_SSP SSP2_2050` gives `no_SSP/S1_2050` and `SSP2_2050/S1_2050`. An omitted option means all the scenarios. `planefr.py --help` lists the existing French scenarios (folders of `2-shocks/1-transitions_2050`) and RoW scenarios (`no_SSP` and the folders of `2-shocks/3-SSPs_2050`). Notes:
 
-- the baselines `Base_year_2015` and `2019_FR` are not recomputed, and the other groups receive the `no_SSP/Base_year_2015` of a previous run;
+- the baselines `Base_year_2015` and `2019_FR` are not recomputed, and the other groups receive the `2050_raw/no_SSP/Base_year_2015` of a previous run;
 - the engine run of `france-shocks` (`no_SSP`, read by `export_dS.py`) is never restricted;
 - the post-processing still processes every folder; an unknown name stops the engine and the error lists the available ones.
 
@@ -429,11 +433,11 @@ All take `--version` (EXIOBASE version, `3.11.2` by default). Each chain stops a
 | 1 | `2-gmrio_to_snac_s` | step `gmrio_to_snac_s` | `gmrio_to_snac_s` pipeline: France accounts in SNAC format, imports separated | `Outputs_inter/gmrio_to_snac_s/<v>_pxp_<year>/` | `--All` |
 | 1b | `2-gmrio_to_snac_s` | step `rebuild_shock_extensions` | Rebuilds the extension folders of the `1-transitions_2050` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/` | `france-shocks` |
 | 2 | `3-update_calib_fr` | step `update_calib_fr` | `update_calib_fr` pipeline: adds the new extensions to the France calibration | `Outputs/France/Base_year_<year>/` | `--All` |
-| 3 | `4-engine` | step `engine_no_ssp` (`france-shocks`), `engine` (`outputs`) | France `eeio` engine: base years, then one run per accounts × scenario pair | `Module_PlaneFR/data/<v>/...` | `france-shocks`, `outputs` |
+| 3 | `4-engine` | step `engine_no_ssp` (`france-shocks`), `engine` (`outputs`) | France `eeio` engine: base years, then one run per accounts × scenario pair | `Module_PlaneFR/data/Outputs_MatMat/<v>/...` | `france-shocks`, `outputs` |
 | 4 | `1-exiobase3_eeio` | `extract_f_y_tot.py` | Direct pressures of final demand, by region | `Outputs/World/Base_year_<year>/extensions/<ext>/F_Y_tot.pkl` | `--All` |
-| 5 | `5-reformat` | `reformat_d_cba_monde_europe.py` | World, EU27 and regional aggregates; France `F_Y_tot` | `Module_PlaneFR/data/<v>/2019_*/` and every France scenario | `france-shocks`, `outputs` |
+| 5 | `5-reformat` | `reformat_d_cba_monde_europe.py` | World, EU27 and regional aggregates; France `F_Y_tot` | `Module_PlaneFR/data/Outputs_MatMat/<v>/2019_raw/2019_*/` and every France scenario | `france-shocks`, `outputs` |
 | 6 | `5-reformat` | `reformat_d_cba_k.py` | Harmonizes the format of the GHG and materials extensions | Files rewritten in place | `france-shocks`, `outputs` |
-| 7 | `a-manual_shocks` | `export_dS.py` | Exports the base-year production and pressures | `Module_PlaneFR/data/S_extraction.xlsx` | `france-shocks` |
+| 7 | `a-manual_shocks` | `export_dS.py` | Exports the base-year production and pressures | `Module_PlaneFR/data/Input_Shocks_MatMat/S_extraction.xlsx` | `france-shocks` |
 | 8 | `a-manual_shocks` | `compute_ds_x_dom.py` | Computes the manual intensity shocks and applies the `F_Y_tot` shocks | `2-shocks/1-transitions_2050/<scenario>/extensions/dom_<ext>/dS_x_dom.pkl`, `F_Y_tot.pkl` of every scenario | `france-shocks` (`--only-f-y-tot` in `outputs`) |
 
 Steps 0, 1, 2 and 4 are the base accounts: they only depend on EXIOBASE and the France calibration, and only `--All` reruns them.
@@ -488,14 +492,14 @@ The `engine_no_ssp` step (chain `france-shocks`) only runs the 2015 base year an
 
 The engine applies each shock relatively, `W = W0 × (1 + dW)`, then recomputes the accounts.
 
-The outputs are stored by **group**, according to the accounts used:
+The outputs are stored by year (`2019_raw/`, `2050_raw/`) and, for 2050, by **group**, according to the accounts used:
 
-| France accounts | Output folder in `Module_PlaneFR/data/<v>/` |
+| France accounts | Output folder in `Module_PlaneFR/data/Outputs_MatMat/<v>/` |
 |---|---|
-| `Base_year_2019`, no shock | `2019_FR/` |
-| `Base_year_2015`, no shock | `no_SSP/Base_year_2015/` |
-| `Base_year_2015` × scenario | `no_SSP/<scenario>/` |
-| `<SSP>_2050` × scenario | `<SSP>_2050/<scenario>/` |
+| `Base_year_2019`, no shock | `2019_raw/2019_FR/` |
+| `Base_year_2015`, no shock | `2050_raw/no_SSP/Base_year_2015/` |
+| `Base_year_2015` × scenario | `2050_raw/no_SSP/<scenario>/` |
+| `<SSP>_2050` × scenario | `2050_raw/<SSP>_2050/<scenario>/` |
 
 The 2015 base year is copied into each group, where it serves as the reference of the figures.
 
@@ -512,8 +516,9 @@ The result is summed over the final demand categories to keep one column per reg
 
 `reformat_d_cba_monde_europe.py` reads `d_cba`, `F_x_dom` and `F_Y_tot` of each extension in the world accounts, then:
 
-- for 2019, it sums the columns over all regions (`2019_W`), over the first 27 regions of the classification, which are the EU27 member states (`2019_EU27`), and over each region other than France (`2019_<code>`). The final demand category "Exports: Total (fob)" is excluded. These folders are deleted and rebuilt at each run;
-- for France, it only writes `F_Y_tot`, into `dom_<ext>/`, because `d_cba` and `F_x_dom` come from the France engine. The `F_Y_tot` of each base year is copied into every France scenario folder **with the same base year**, read from the folder's `system/info.json`, wherever the folder sits: `2019_FR` and its copies in the `Base_year/` and `S1+/` groups get the 2019 value, all scenarios based on 2015 get the 2015 value. The `ghg_emissions` and `raw_materials` extensions are excluded, their direct pressures coming from the France calibration.
+- for 2019, it sums the columns over all regions (`2019_W`), over the first 27 regions of the classification, which are the EU27 member states (`2019_EU27`), and over each region other than France (`2019_<code>`), all written in `2019_raw/`. The final demand category "Exports: Total (fob)" is excluded. These folders are deleted and rebuilt at each run;
+- for France, it only writes `F_Y_tot`, into `dom_<ext>/`, because `d_cba` and `F_x_dom` come from the France engine. The `F_Y_tot` of each base year is copied into every France scenario folder **with the same base year**, read from the folder's `system/info.json`, wherever the folder sits: `2019_raw/2019_FR` and its copies in the display groups (e.g. `BdF/2019`, `2019/FR`) get the 2019 value, all scenarios based on 2015 get the 2015 value. The `ghg_emissions` and `raw_materials` extensions are excluded, their direct pressures coming from the France calibration;
+- if `Outputs/World/Base_year_2019_agri` exists (`regions_agri`, § 5.4), it processes it the same way into `2019_W_agri`, `2019_EU27_agri` and `2019_<code>_agri`, without any France `F_Y_tot` export. If it does not exist, the existing `_agri` folders are left untouched.
 
 France scenario folders are recognized by their `dom_`/`imp_` extension folders and are never deleted. This script resets `F_Y_tot` to its base-year value: `compute_ds_x_dom.py` must run after it to reapply the `F_Y_tot` shocks.
 
@@ -564,31 +569,55 @@ Points specific to this chain:
 
 The `F_Y_tot` shocks are read in `my_manual_param.xlsx` at each run of step 4, whereas the `dS_x_dom` applied at step 1 are those computed by the last `france-shocks` run: after editing `my_manual_param.xlsx`, run `france-shocks` before `outputs`.
 
-**`--ssps`.** `outputs --ssps` only runs the France engine for the SSP groups, i.e. every accounts folder of `Outputs/France/` except `Base_year_2015` (found automatically). Use it after `ssp-shocks`, which does not change `no_SSP`. These groups receive the `no_SSP/Base_year_2015` baseline of a previous run, and `2019_FR` is not recomputed. Steps 2 to 5 still process every folder.
+**`--ssps`.** `outputs --ssps` only runs the France engine for the SSP groups, i.e. every accounts folder of `Outputs/France/` except `Base_year_2015` (found automatically). Use it after `ssp-shocks`, which does not change `no_SSP`. These groups receive the `2050_raw/no_SSP/Base_year_2015` baseline of a previous run, and `2019_FR` is not recomputed. Steps 2 to 5 still process every folder.
 
 `agri` is the agri-food variant of `outputs`: it produces results in which only the pressures of the agri-food system remain. It does not change the production system: it cancels the pressure intensities of the other sectors with a `dS = −1` shock. It runs:
 
 1. `generate_shock_agri.py`, which creates the `1-transitions_2050_agri` and `3-SSPs_2050_agri` shock sets from the current `1-transitions_2050` and `3-SSPs_2050`, plus a `Base_year_agri` scenario without system shock (§ 6.3);
 2. steps 3 to 5 of § 5.3 on `3-SSPs_2050_agri`;
-3. the steps of `outputs`.
+3. `regions_agri`, the 2019 geographies restricted to the agri-food system (below);
+4. the steps of `outputs`.
 
-Steps 2 and 3 are run with the suffix `_agri` (`--suffix _agri` when a step is run alone), which appends this suffix to every folder read and written. The groups produced are `no_SSP_agri/` and `<SSP>_2050_agri/`, with `Base_year_agri` as reference.
+Steps 2 and 4 are run with the suffix `_agri` (`--suffix _agri` when a step is run alone), which appends this suffix to every folder read and written. The groups produced are `2050_raw/no_SSP_agri/` and `2050_raw/<SSP>_2050_agri/`, with `Base_year_agri` as reference.
+
+**`regions_agri`** (`planefr.py step regions_agri`) produces the 2019 geographies of the `REGIONS_agri` display group. It reuses the two `Base_year_agri` shocks, pure Food masks (`dS = 0` on the Food sectors, `−1` elsewhere, no system shock) whose rows and columns are the same for the 2015 and 2019 accounts. Its four runs depend on each other, so the step stops at the first failure:
+
+| # | Run | Accounts | Shock | Output |
+|---|---|---|---|---|
+| 1 | World engine | `Outputs/World/Base_year_2019` | `3-SSPs_2050_agri/Base_year_agri` (the only Food mask in world format) | `Outputs/World/Base_year_2019_agri` |
+| 2 | `gmrio_to_snac_s` | output of 1 | — | `Outputs_inter/gmrio_to_snac_s/Base_year_2019_agri` |
+| 3 | `update_calib_fr` | output of 2, France calibration 2019 | — | `Outputs/France_agri/Base_year_2019_agri` |
+| 4 | France engine | output of 3 | `1-transitions_2050_agri/Base_year_agri` (also filters the extensions coming from the older France calibration) | `2019_raw/2019_FR_agri` |
+
+The France engine of the 2050 groups ignores the accounts whose name contains "2019", so `Base_year_2019_agri` does not create a group. Step 5 of § 5.2 (`reformat_d_cba_monde_europe.py`) then turns output 1 into `2019_raw/2019_W_agri`, `2019_EU27_agri` and `2019_<code>_agri`. `regions_agri` runs in `agri` and in every type-of-change option combined with `--Agri`. Like the baselines, it is skipped when `--France` or `--RoW` restrict the outputs.
+
+The two masks do not have exactly the same scope. On the France side, `dom_ghg_combustion` keeps Food and fertilizers (through `S_Z`) and `dom_raw_materials` is filtered on its rows (all extracted biomass). On the world side, these pressures go through `S_x_dom`: the Food columns are kept, plus fertilizers for `ghg_emissions`. France and the other regions therefore differ slightly for GHG and raw materials. The domestic and imported parts of the 2050 `_agri` scenarios have the same difference. `2019_FR_agri` receives the full France 2019 `F_Y_tot` (direct household emissions), like the 2050 `_agri` folders.
 
 ### 5.5 Assembling the displayed groups
 
-The `ADEME`, `PAPER`, `S1+` and `Base_year` groups combine or rename scenarios computed in other groups. They are declared in [data/scenario_groups.json](../data/scenario_groups.json), which maps each displayed folder to its source, an engine output relative to `data/<version>/`:
+The display groups (`ADEME`, `CONF`, `BdF`, `2019`) combine or rename scenarios computed by the engine. They are declared in [data/Outputs_MatMat/scenario_groups.json](../data/Outputs_MatMat/scenario_groups.json), which maps each displayed folder to its source, an engine output relative to `data/Outputs_MatMat/<version>/` (`2019_raw/<scenario>` or `2050_raw/<group>/<scenario>`):
 
 ```json
-"PAPER": {
-  "2015": "no_SSP/Base_year_2015",
-  "S1": "no_SSP/S1_2050",
-  "S1+": "SSP2_19_Sus_2050/S1_2050",
-  "S4": "no_SSP/S4_2050",
-  "TREND": "no_SSP/TEND_2050"
+"CONF": {
+  "2015": "2050_raw/no_SSP/Base_year_2015",
+  "S1": "2050_raw/no_SSP/S1_2050",
+  "S1+": "2050_raw/SSP2_19_Sus_2050/S1_2050",
+  "S4": "2050_raw/no_SSP/S4_2050",
+  "TREND": "2050_raw/no_SSP/TEND_2050"
 }
 ```
 
-[build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) rebuilds them at the end of the `outputs` and `agri` chains and of the type-of-change options, after `compute_ds_x_dom.py`, so that the copies carry the final `F_Y_tot` values. Each declared folder is deleted then recopied from its source; undeclared folders of a group are left untouched and reported. The script stops with exit code 1, without copying anything, if a source is missing or if a group is the parent folder of a source (the engine output groups are never overwritten). It can also be run alone, e.g. `python build_scenario_groups.py --groups S1+`.
+The display groups are built directly in `data/Outputs_MatMat/<version>/`, next to `2019_raw/` and `2050_raw/`:
+
+```
+Outputs_MatMat/<version>/
+├── 2019_raw/     2019_FR (France engine), 2019_W, 2019_EU27, 2019_<code> (step 5),
+│                 and their _agri variants (regions_agri, § 5.4)
+├── 2050_raw/     no_SSP/, <SSP>_2050/, ..._agri/ (France engine, one folder per scenario)
+└── ADEME/, CONF/, BdF/, REGIONS/, REGIONS_agri/   display groups (build_scenario_groups.py)
+```
+
+[build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) rebuilds them at the end of the `outputs` and `agri` chains and of the type-of-change options, after `compute_ds_x_dom.py`, so that the copies carry the final `F_Y_tot` values. Each declared folder is deleted then recopied from its source; undeclared folders of a group are left untouched and reported. Each declared group `<G>` also gives an agri-food group `<G>_agri`, with the same displayed names and the `_agri` sources: `2019_raw/2019_X` becomes `2019_raw/2019_X_agri`, `2050_raw/<g>/<s>` becomes `2050_raw/<g>_agri/<s>_agri`, and `Base_year_2015` becomes `Base_year_agri` (e.g. `CONF_agri`, `REGIONS_agri`). A derived group is skipped with a warning as long as one of its sources is missing (e.g. before the first `--Agri` run); declaring `<G>_agri` in the file overrides it. A declared group none of whose sources exist yet is also skipped with a warning. The script stops with exit code 1, without copying anything, if only some sources of a group are missing or if a group is the parent folder of a source or is named `2019_raw`/`2050_raw` (the engine outputs are never overwritten). It can also be run alone, e.g. `python build_scenario_groups.py --groups BdF`.
 
 The group folders must therefore not be edited by hand. To add or change a display group, edit `scenario_groups.json` and rerun the script.
 
@@ -596,18 +625,18 @@ The group folders must therefore not be edited by hand. To add or change a displ
 |---|---|---|---|
 | `ADEME` | `2015` | `Base_year_2015` | none |
 | | `S1` to `S4`, `TREND` | `Base_year_2015` | `S1_2050` to `S4_2050`, `TEND_2050` |
-| `PAPER` | `2015` | `Base_year_2015` | none |
+| `CONF` | `2015` | `Base_year_2015` | none |
 | | `S1`, `S4`, `TREND` | `Base_year_2015` | `S1_2050`, `S4_2050`, `TEND_2050` |
 | | `S1+` | `SSP2_19_Sus_2050` | `S1_2050` |
-| `S1+` | `2019_FR` | `Base_year_2019` | none |
-| | `S1_2050` | `SSP2_19_Sus_2050` | `S1_2050` |
-| `Base_year` | `2019_FR` | `Base_year_2019` | none |
+| `BdF` | `2019` | `Base_year_2019` | none |
+| | `S1+` | `SSP2_19_Sus_2050` | `S1_2050` |
+| `2019` | `FR`, `EU27`, `W`, `WF` | World accounts 2019 (France: `Base_year_2019`) | none |
 
 The exact origin of a folder can be read in its `metadata.json`, written by the engine, which records the paths of the accounts and shock used. Its `system/info.json` gives its base year and scenario name; `reformat_d_cba_monde_europe.py` and `compute_ds_x_dom.py` rely on it, so copied folders receive the right `F_Y_tot` values and shocks.
 
-`export_dS.py` reads the `no_SSP` engine outputs under their explicit names (`Base_year_2015` and the `SCENARIO_FOLDER_NAMES` of `compute_ds_x_dom.py`), and stops with an explicit message if one is missing. Other folders placed in `no_SSP/` are ignored.
+`export_dS.py` reads the `2050_raw/no_SSP` engine outputs under their explicit names (`Base_year_2015` and the `SCENARIO_FOLDER_NAMES` of `compute_ds_x_dom.py`), and stops with an explicit message if one is missing. Other folders placed in `no_SSP/` are ignored.
 
-> **Point of attention.** At the time of writing, the folders of `no_SSP/` have been renamed by hand (`Base_year`, `S1`… instead of `Base_year_2015`, `S1_2050`…). The `no_SSP` sources of `ADEME` and `PAPER` therefore do not exist under their engine names until the France engine is rerun, which recreates them next to the renamed folders. These renamed folders then become redundant duplicates in the `no_SSP` group, which is the default group of `planefr_lib` (`PLANEFR_SCENARIO_GROUP`).
+All the scripts that go through every scenario (`compute_ds_x_dom.py`, `reformat_d_cba_k.py`, `reformat_d_cba_monde_europe.py`) list them with `planefr_paths.find_all_scenario_dirs()`: `2019_raw/<scenario>`, `2050_raw/<group>/<scenario>` and the display groups. The paths are `planefr_paths.RAW_2019_DIR` and `RAW_2050_DIR`.
 
 ---
 
@@ -640,11 +669,11 @@ ds_row     = s_2050 / s_base - 1
 
 The shock is applied uniformly to all the sectors exerting the pressure. An empty or zero shock leaves `dS = 0`: it means "not calibrated", not "constant pressure". In that case the intensity is unchanged and the pressure follows production.
 
-The base-year data and the 2050 production are read in `Module_PlaneFR/data/S_extraction.xlsx`, written by `export_dS.py` from the engine outputs: an `x` sheet with one row per scenario, and one `Fx_<ext>` and one `FY_<ext>` sheet per extension.
+The base-year data and the 2050 production are read in `Module_PlaneFR/data/Input_Shocks_MatMat/S_extraction.xlsx`, written by `export_dS.py` from the engine outputs: an `x` sheet with one row per scenario, and one `Fx_<ext>` and one `FY_<ext>` sheet per extension.
 
 **Direct pressures of final demand.** They have no sectoral dimension and do not go through the engine. The script writes the base-year value multiplied by `(1 + shock)` directly into the scenario's `F_Y_tot.pkl`. Starting from the base-year value, not from the value already in the file, makes the operation idempotent.
 
-These shocks are applied to **every** scenario folder of `data/<version>/`, whatever its group (`no_SSP`, SSP groups, `_agri` groups, groups assembled by hand). The scenario of a folder is read from its `system/info.json` (`scenario_name` = S1…TEND and `base_year` = 2015), not from its name: `PAPER/S1+`, for example, receives the S1 shock. Base years without shock (empty `scenario_name`, `Base_year_agri`) are left out.
+These shocks are applied to **every** scenario folder of `data/Outputs_MatMat/<version>/`, whatever its location (`2050_raw/no_SSP`, SSP groups, `_agri` groups, display groups). The scenario of a folder is read from its `system/info.json` (`scenario_name` = S1…TEND and `base_year` = 2015), not from its name: `CONF/S1+`, for example, receives the S1 shock. Base years without shock (empty `scenario_name`, `Base_year_agri`) are left out.
 
 The `--only-f-y-tot` option applies the `F_Y_tot` shocks without recomputing or rewriting the `dS_x_dom`.
 
@@ -662,7 +691,7 @@ S_2050 = S_base × (F_2050 / F_2020) / (x_2050 / x_2020)
 
 #### The matching workbook
 
-`Module_PlaneFR/data/SSP/Matching_extensions_EXIOBASE_IMAGE.xlsx` holds all the parameters.
+`Module_PlaneFR/data/Input_Shocks_MatMat/Matching_EXIOBASE_IMAGE.xlsx` holds all the parameters.
 
 | Sheet | Content |
 |---|---|
@@ -690,7 +719,7 @@ Region mapping goes through two tables: the `Regions` sheet links the IMAGE regi
 
 #### Step 1 — `extract_S_SSPs.py`: 2050/2020 changes
 
-For each file of `data/SSP/Scenarios/*.csv` and each aggregated region, the script evaluates the formulas of the `Matching` sheet in 2020 and in 2050, then computes the three ratios.
+For each file of `data/Input_Shocks_MatMat/input_data/*.csv` and each aggregated region, the script evaluates the formulas of the `Matching` sheet in 2020 and in 2050, then computes the three ratios.
 
 The formulas are written in plain text in the cells. A parser interprets them with the following rules:
 
@@ -752,7 +781,7 @@ The shock is then expressed in relative form, `dA = A'/A − 1` where `A > 0` an
 - for the sectors kept, `dS` keeps the value of the original scenario, or 0 if the scenario does not shock the extension;
 - for all other sectors, `dS = −1`, which cancels the intensity.
 
-The sectors kept are those marked 1 in the `Food` column of the `M` sheet of `Module_PlaneFR/data/bridge_matrices.xlsx`, plus "Products of forestry, logging and related services (02)" and minus "Hotel and restaurant services (55)". For the SSP shock sets, the base accounts are the same as in § 5.3.
+The sectors kept are those marked 1 in the `Food` column of the `M` sheet of `Module_PlaneFR/data/Post_processing/bridge_matrices.xlsx`, plus "Products of forestry, logging and related services (02)" and minus "Hotel and restaurant services (55)". For the SSP shock sets, the base accounts are the same as in § 5.3.
 
 | Extension | Variable shocked | Filter |
 |---|---|---|
@@ -769,7 +798,7 @@ The direct pressures of final demand (`S_Y`) are not shocked.
 
 ### 7.1 Structure of the model results
 
-`Module_PlaneFR/data/<version>/` contains one folder per scenario, either directly or in a group folder.
+`Module_PlaneFR/data/Outputs_MatMat/<version>/` contains the raw engine outputs, `2019_raw/<scenario>` and `2050_raw/<group>/<scenario>`, and the display groups `<group>/<scenario>` (§ 5.5).
 
 A France scenario has its extensions split into `dom_<ext>` and `imp_<ext>`:
 
@@ -792,7 +821,7 @@ The computation and plotting code is gathered in [notebooks/planefr_lib/](../not
 
 | Module | Role |
 |---|---|
-| [config.py](../notebooks/planefr_lib/config.py) | Paths, scenario groups, sheet and column names of the parameter workbooks, row names of the thresholds, share columns, colors |
+| [config.py](../notebooks/planefr_lib/config.py) | Paths, scenario groups, sheet and column names of the parameter workbooks, row names of the boundaries, share columns, colors |
 | [io.py](../notebooks/planefr_lib/io.py) | Reading the parameter workbooks and the model pickles |
 | [processing.py](../notebooks/planefr_lib/processing.py) | Footprint and budget computations |
 | [colors.py](../notebooks/planefr_lib/colors.py) | Colors by consumption category and by scenario |
@@ -800,15 +829,16 @@ The computation and plotting code is gathered in [notebooks/planefr_lib/](../not
 | [plot_radial_synthesis.py](../notebooks/planefr_lib/plot_radial_synthesis.py) | Radial wheel of the planetary boundaries |
 | [plot_overshoot.py](../notebooks/planefr_lib/plot_overshoot.py) | Overshoot of the safe operating space, by region |
 | [plot_bubble.py](../notebooks/planefr_lib/plot_bubble.py) | Intensities by product or by category, and the associated Excel export |
+| [figure_export.py](../notebooks/planefr_lib/figure_export.py) | Excel export of the data of each figure (`excel_path` argument of the figure functions) |
 | [plot_process_breakdown.py](../notebooks/planefr_lib/plot_process_breakdown.py) | Contribution of each extension to an indicator |
 
 Main loaders of `io.py`:
 
 | Function | Reads |
 |---|---|
-| `load_characterization_factors(scenario_group)` | `characterization_factors.xlsx`, sheet `All`, or `Agri` for a group ending in `_agri`. Column names are matched case-insensitively. |
-| `load_thresholds(scenario_group)` | `thresholds.xlsx`, sheet `All` or `Agri`. Row and column labels are normalized (repeated spaces collapsed). |
-| `load_dls()` | `thresholds.xlsx`, sheet `DLS` |
+| `load_characterization_factors(scenario_group)` | `indicator_computing.xlsx`, sheet `All`, or `Agri` for a group ending in `_agri`. Column names are matched case-insensitively. |
+| `load_boundaries(scenario_group)` | `boundaries_values.xlsx`, sheet `All` or `Agri`. Row and column labels are normalized (repeated spaces collapsed); the budget, `Equality…` and unit rows are matched case-insensitively and renamed to the names of `config`. |
+| `load_dls()` | `boundaries_values.xlsx`, sheet `DLS` |
 | `load_bridge_matrices()`, `load_bridge_m_matrix(sheet)` | `bridge_matrices.xlsx` |
 | `load_budget_shares_df()` | `budget_shares.xlsx`, sheet `Budget_shares_regions`, plus the `UN – EPC <period>` columns of `Budget_shares_variants` |
 | `load_population_df()` | `budget_shares.xlsx`, sheet `Population`, indexed by EXIOBASE region code, one column per period |
@@ -816,7 +846,11 @@ Main loaders of `io.py`:
 
 The pickle loaders return `None` when a file does not exist for a scenario × extension pair. This is a normal case: `ghg_combustion`, for example, does not exist in the World and Europe folders.
 
-**Selecting scenarios.** `config.get_scenario_folders(exclude_2019, exclude_others, scenario_group)` returns the folders of a group, sorted by name. A folder is recognized as a scenario if it contains an `extensions` sub-folder. The reference scenario of the figures is the first in the list (`REFERENCE_SCENARIO_IDX = 0`). If the group has no `Base_year_2015` folder, a warning is issued and the reference is the first folder in alphabetical order: `2015` in `ADEME` and `PAPER`, `2019_FR` in `S1+`.
+**Selecting scenarios.** `config.get_scenario_folders(exclude_2019, exclude_others, scenario_group, regions)` returns the folders of a group, sorted by name. A folder is recognized as a scenario if it contains an `extensions` sub-folder. The group is looked up by `config.get_group_dir`: first a display group of `<version>/` (`ADEME`, `CONF`, `BdF`, `2019`), then an engine group of `2050_raw/` (`no_SSP`, `SSP2_2050`…). `config.get_scenario_groups()` lists them all.
+
+The 2019 geographies are read in `2019_raw/` (`config.get_2019_folders(regions)`). With `exclude_2019=False`, those of `regions` are added to the group, by default `config.DEFAULT_2019_REGIONS` (`FR`, `EU27`, `W`, `WF`); `regions="all"` takes all of them. The group name `"2019_raw"` (`config.RAW_2019_GROUP`) displays the 2019 geographies only, filtered by `regions`.
+
+The reference scenario of the figures is the first in the list (`REFERENCE_SCENARIO_IDX = 0`). If the group has no `Base_year_2015` folder, a warning is issued and the reference is the first folder in alphabetical order: `2015` in `ADEME` and `CONF`, `2019` in `BdF`.
 
 > **Possible improvement — library structure.**
 > - `planefr_lib` is imported by adding `notebooks/` to `sys.path`, both in the notebooks and in `extract_S_SSPs.py`; making it an installable package (`pip install -e`) would remove these path manipulations.
@@ -826,7 +860,7 @@ The pickle loaders return `None` when a file does not exist for a scenario × ex
 
 #### From extensions to indicatores
 
-`data/characterization_factors.xlsx` makes the link. Its `All` sheet lists 653 rows with five columns: `Indicators` (indicator), `EXIOBASE groups` (extension), `EXIOBASE stressors` (row of the extension), `Units`, `Characterization factors`. The `Agri` sheet (126 rows) is read instead for groups whose name ends in `_agri`.
+`data/Post_processing/indicator_computing.xlsx` makes the link. Its `All` sheet lists 653 rows with five columns: `Indicators` (indicator), `EXIOBASE groups` (extension), `EXIOBASE stressors` (row of the extension), `Units`, `Characterization factors`. The `Agri` sheet (126 rows) is read instead for groups whose name ends in `_agri`.
 
 The pressure of an indicator is the sum, over its rows, of the value of the row multiplied by its factor:
 
@@ -848,7 +882,7 @@ pressure(indicator) = Σ_rows  factor(row) × value(row)
 | Biodiversity loss - PDF | 408 rows from six extensions | PDF.m2.yr per unit of pressure |
 | Biodiversity loss - HANPP | 24 rows of `land`, 34 of `raw_materials` | 5.3e-8 to 5.5e-7 |
 
-The NH3 and N2O factors correspond to the nitrogen mass fraction of each molecule (14/17 and 28/44), multiplied by 1e-9 to go from kilograms to teragrams. The origin of the other factors is not documented in the repository (source to be specified). The factors of "Biodiversity loss - PDF" were added by `data/add_biodiversity_rows.py` from IMPACT World+ 2.2.1, by summing the indicators in PDF.m2.yr, excluding the "long term" indicators. This is a one-shot script: the IMPACT World+ file is not kept in `data/` and must be put back next to the script to rerun it.
+The NH3 and N2O factors correspond to the nitrogen mass fraction of each molecule (14/17 and 28/44), multiplied by 1e-9 to go from kilograms to teragrams. The origin of the other factors is not documented in the repository (source to be specified). The factors of "Biodiversity loss - PDF" were added by `data/Post_processing/add_biodiversity_rows.py` from IMPACT World+ 2.2.1, by summing the indicators in PDF.m2.yr, excluding the "long term" indicators. The IMPACT World+ file is kept in `data/Post_processing/input_data/`, where the script reads it.
 
 #### Consumption footprint of a France scenario
 
@@ -857,7 +891,7 @@ The NH3 and N2O factors correspond to the nitrogen mass fraction of each molecul
 1. **Reading.** `d_cba_k.pkl` of `dom_<ext>` and `imp_<ext>`. This is the footprint computed with endogenized capital: one row per pressure, one column per product × final demand category pair (200 products × 5 categories).
 2. **Characterization.** Filtering the rows of the indicator and weighting them by their factor (`filter_and_weight_vector`).
 3. **Breakdown.** Projection of the 1,000 columns on five consumption categories with the `Final conso. cat.` sheet of `bridge_matrices.xlsx`: Food, Housing, Mobility, Final goods, Final services. The export columns have zero weight: the footprint is that of households and general government.
-4. **Conversion.** Division by the "Unit conversion Exiobase" row of `thresholds.xlsx`, to go from the EXIOBASE unit to the figure unit.
+4. **Conversion.** Division by the "Unit conversion Exiobase" row of `boundaries_values.xlsx`, to go from the EXIOBASE unit to the figure unit.
 5. **Final demand.** Addition of `F_Y_tot`, if it exists, in a separate category called `F_Y` ("Not allocated" in the legends), counted as domestic.
 6. **Aggregation.** Sum over the extensions of the indicator.
 
@@ -880,13 +914,13 @@ Only `process_scenario` reads `d_cba_k.pkl`. The three other functions read `d_c
 
 For the per-capita computation, the population is read in the `Population` sheet of `budget_shares.xlsx` (UN World Population Prospects 2024, thousands of inhabitants). The period is deduced from the folder name (`2019`, `2015`, otherwise `2050`), and the region from the region code in the name (`processing.get_population`).
 
-### 7.4 Thresholds and budgets
+### 7.4 Boundaries and budgets
 
 #### Global budgets
 
-The `All` sheet of `data/thresholds.xlsx` gives, for each indicator, three levels of annual global budget. Values at the time of writing (source to be specified; the two GHG columns are computed by formulas in the cells):
+The `All` sheet of `data/Boundaries/boundaries_values.xlsx` gives, for each indicator, three levels of annual global budget. Values at the time of writing (source to be specified; the two GHG columns are computed by formulas in the cells):
 
-| indicator | Lower safe bound | Safe limit | Upper safe bound | Unit |
+| indicator | Lower Safe Boundary | Safe Boundary | High-Risk Boundary | Unit |
 |---|---|---|---|---|
 | GHG emissions | 2.39 | 4.55 | 10.84 | GtCO2eq |
 | GHG emissions (2019) | 6.15 | 9.74 | 16.93 | GtCO2eq |
@@ -899,7 +933,7 @@ The `All` sheet of `data/thresholds.xlsx` gives, for each indicator, three level
 | Biodiversity loss - PDF | — | 6.5 | 45.5 | 10¹² PDF.m2.yr |
 | Biodiversity loss - HANPP | — | 5.5 | 11 | GtC |
 
-The `Agri` sheet only has a "Safe limit" row, for seven indicatores (GHG emissions: 5 GtCO2eq; Blue water consumption: 2,000 km³; the others as above).
+The `Agri` sheet covers seven indicators (GHG emissions: 5 GtCO2eq; Blue water consumption: 2,000 km³; the others as above). It spells the budget rows in lowercase ("Lower safe boundary", "Safe boundary", "High-risk boundary"); `io.load_boundaries` renames them to the names of the `All` sheet. It has no "GHG emissions (2019)" column: the by-region figure then reads the "GHG emissions" column.
 
 The same sheet contains the unit-conversion rows:
 
@@ -909,13 +943,13 @@ The same sheet contains the unit-conversion rows:
 | `Unit conversion Exiobase` | Divisor: from the EXIOBASE unit to the figure unit |
 | `Figures unit` | Unit displayed |
 | `(p.cap)` variants | Same roles for per-capita values |
-| `Equality…` | Precomputed national thresholds, read when no sharing principle is requested |
+| `Equality…` | Precomputed national boundaries, read when no sharing principle is requested |
 
 The `Equality…` rows are formulas linked to `budget_shares.xlsx`: global budget × France share of the `Budget_shares_variants` sheet (`UN – EPC 2019-2100` for GHG, `UN – EPC 2050` otherwise) for the absolute rows, and population of the `Population` sheet for the `(p.cap)` rows. These links are by cell reference: moving rows or columns in `budget_shares.xlsx`, or renaming its sheets, breaks them.
 
-> **Point of attention.** The external links of `thresholds.xlsx` still point to a sheet called `Budget_shares_variantes`, the former name of `Budget_shares_variants` (30 cells). The values cached in the file remain correct and are what pandas reads, but Excel cannot refresh these formulas until the links are updated.
+> **Point of attention.** The external links of `boundaries_values.xlsx` still point to a sheet called `Budget_shares_variantes`, the former name of `Budget_shares_variants` (30 cells). The values cached in the file remain correct and are what pandas reads, but Excel cannot refresh these formulas until the links are updated.
 
-> **Possible improvement — fragile dependencies on the Excel files.** Several reads depend on the layout of the workbooks rather than on explicit keys: cell links between `thresholds.xlsx` and `budget_shares.xlsx` (broken as soon as a sheet is renamed, as above, or a row or column moved); fixed positions (`iloc[1:201]` in `io.load_bridge_m_matrix`, `header=3` for `budget_shares.xlsx`, `iloc[0, 7:]` in `compute_ds_x_dom.load_manual_shocks`); scenario properties deduced from folder names (`"2019" in name` in `processing.get_population`). Computing the national thresholds in `processing` from the global budgets and the shares, instead of reading formula results, and storing the parameters as long-format tables with explicit key columns, would remove these failure modes.
+> **Possible improvement — fragile dependencies on the Excel files.** Several reads depend on the layout of the workbooks rather than on explicit keys: cell links between `boundaries_values.xlsx` and `budget_shares.xlsx` (broken as soon as a sheet is renamed, as above, or a row or column moved); fixed positions (`iloc[1:201]` in `io.load_bridge_m_matrix`, `header=3` for `budget_shares.xlsx`, `iloc[0, 7:]` in `compute_ds_x_dom.load_manual_shocks`); scenario properties deduced from folder names (`"2019" in name` in `processing.get_population`). Computing the national boundaries in `processing` from the global budgets and the shares, instead of reading formula results, and storing the parameters as long-format tables with explicit key columns, would remove these failure modes.
 
 #### From global to national budget
 
@@ -923,7 +957,7 @@ The `sharing_principle` parameter of the plotting functions chooses the rule. Al
 
 | Value | Budget of France (or of a region) |
 |---|---|
-| `None` | Direct reading of the `Equality…` rows of `thresholds.xlsx` |
+| `None` | Direct reading of the `Equality…` rows of `boundaries_values.xlsx` |
 | `"EPC"`, `"CTR"` | `Global budget / conversion × share of the region`, share read in `budget_shares.xlsx` (`processing.compute_region_budget`) |
 
 With `"EPC"`, the share column depends on the figure and on the indicator:
@@ -931,15 +965,15 @@ With `"EPC"`, the share column depends on the figure and on the indicator:
 | Figure | Default column | Exception for GHG emissions |
 |---|---|---|
 | Radial wheel, synthesis by indicator | `UN – EPC 2050` | `UN – EPC 2019-2100` |
-| Overshoot by region, stacked bars by scenario | `UN – EPC 2019` | `UN – EPC 2019-2100`; budgets read in the "GHG emissions (2019)" column for the by-region figure, and for the stacked bar of a 2019 scenario |
+| Overshoot by region, stacked bars by scenario | `UN – EPC 2019` | `UN – EPC 2019-2100`; budgets read in the "GHG emissions (2019)" column for the by-region figure, and for the stacked bar of a 2019 scenario; if the sheet has no such column (`Agri`), the "GHG emissions" column is used (`config.region_figure_boundary_column`) |
 
 With `"CTR"`, the reference column is `CTR share ref. (SSP2, Pop 2019 × GDP 1990-2019)`. The sensitivity bounds of the overshoot figure are the `<principle> min` and `<principle> max` columns.
 
-These choices are set in `config.py` (`RADIAL_EPC_PATTERN`, `REGION_FIGURE_EPC_REF_PATTERN`, `REGION_FIGURE_THRESHOLD_COLUMN_BY_SUBPROCESS` and their variants by indicator). The `plot_stacked_bar` functions choose between the two sets with their `epc_reference` parameter, `"radial"` or `"region"`.
+These choices are set in `config.py` (`RADIAL_EPC_PATTERN`, `REGION_FIGURE_EPC_REF_PATTERN`, `REGION_FIGURE_BOUNDARY_COLUMN_BY_SUBPROCESS` and their variants by indicator). The `plot_stacked_bar` functions choose between the two sets with their `epc_reference` parameter, `"radial"` or `"region"`.
 
 #### Budget shares by region
 
-`data/budget_shares.xlsx` is produced by [data/budget_shares.py](../data/budget_shares.py). It gives the share of the global budget of each of the 49 EXIOBASE regions and of the EU27, under two principles:
+`data/Boundaries/budget_shares.xlsx` is produced by [data/Boundaries/budget_shares.py](../data/Boundaries/budget_shares.py), from the sources of `data/Boundaries/input_data/`. It gives the share of the global budget of each of the 49 EXIOBASE regions and of the EU27, under two principles:
 
 ```
 EPC_s(P)    = Pop_s(P) / Σ_s Pop_s(P)
@@ -959,27 +993,33 @@ The shares are computed country by country, then summed by region. Historical da
 
 #### Social floor
 
-The `DLS` sheet of `thresholds.xlsx` gives a decent-living-standards floor for three indicatores (GHG emissions, Agricultural land, Raw material consumption), per capita and nationally. The "DLS" rows are used for the base-year groups, the "DLS 2050" rows for the 2050 groups. Only the national values are read by the code; a missing level (e.g. lower or upper bound) is not drawn.
+The `DLS` sheet of `boundaries_values.xlsx` gives a decent-living-standards floor for three indicatores (GHG emissions, Agricultural land, Raw material consumption), per capita and nationally. The rows are chosen per scenario, whatever its group (`config.is_base_year_scenario`, pattern `config.BASE_YEAR_SCENARIO_PATTERN`): the "DLS" rows for the base-year scenarios (`2015`, `2019`, `Base_year_*`, `2019_*`), the "DLS 2050" rows for the others. When a figure mixes both kinds, the base-year DLS is drawn on the base-year bars only and the DLS 2050 on the others; when all its scenarios are of the same kind, the three levels (DLS, lower and upper bounds) are drawn on every bar. Only the national values are read by the code; a missing level (e.g. lower or upper bound) is not drawn.
 
 ### 7.5 Notebooks and figures
 
 Each notebook sets a scenario group in its `SCENARIO_GROUP` variable, loads the data, computes the footprints, then calls a plotting function.
 
-| Notebook | Plotting function | Files produced in `figures/` |
-|---|---|---|
-| `footprint_decomposition.ipynb` | `create_stacked_bar_chart`, `create_synthesis_figure_by_lp` | `scenario_NN_<name>.png`, `synthesis_by_lp_all_scenarios.png` |
-| `radial_synthesis.ipynb` | `create_radial_synthesis_figure` | `<group>/radial_synthesis_cba_all_scenarios.png`, `..._pba_...png` |
-| `multi-regions_synthesis.ipynb` | `create_overshoot_safe_space_figure_by_region` | `overshoot_safe_operating_space_by_region.png` |
-| `driver_comparison.ipynb` | `export_subprocess_tables_excel`, `plot_bubble_chart` | `bubble_data_by_subprocess_<scenario>.xlsx`, `bubble_chart_*.png` |
-| `biodiversity_process_contribution.py` | `create_subprocess_contribution_chart` | `biodiversity_loss_process_contribution.png` |
+The figure functions are named after their notebook (`create_<notebook>`, with a suffix when a notebook has several), and each notebook writes into its own folder, `figures/<notebook>/`: `config.figure_dir(NOTEBOOK_NAME, *subfolders)` returns it and creates it.
+
+Every figure function takes an `excel_path` argument. When it is given, the function writes there the data it plots, and the notebooks save this workbook next to the figure, with the same name (`.xlsx` instead of `.png`), for publishing the results. The workbooks are written by [figure_export.py](../notebooks/planefr_lib/figure_export.py): an `About` sheet (content, units, boundaries and sharing principle used), then tables in long format, one row per value. The values are the absolute values behind the figure, in the "Figures unit" of `boundaries_values.xlsx`, even when the figure shows percentages or ratios; these are given in additional columns.
+
+| Notebook | Function | Files produced in `figures/<notebook>/` | Sheets of the workbook |
+|---|---|---|---|
+| `footprint_decomposition.ipynb` | `create_footprint_decomposition_by_scenario` | `scenario_NN_<name>.png` / `.xlsx` | `Footprint` (category × origin), `Indicators` (total, variation, Safe Boundary, overshoot) |
+| | `create_footprint_decomposition` | `synthesis_by_lp_all_scenarios.png` / `.xlsx` | `Footprint`, `Indicators` (CBA, PBA, variations), `Boundaries` (bounds and DLS) |
+| `radial_synthesis.ipynb` | `create_radial_synthesis` | `<group>/radial_synthesis_cba_all_scenarios.png` / `.xlsx`, `<group>/..._pba_...` | `Values` (value, ratio to the Safe Boundary, variation; by household category with `Bdf`), `Boundaries`, `Footprint` (CBA) |
+| `multi-regions_synthesis.ipynb` | `create_multi_regions_synthesis` | `<group>/overshoot_safe_operating_space_by_region.png` / `.xlsx` (group set by `SCENARIO_GROUP`, e.g. `2019`; with `"2019_raw"`, the regions of `REGIONS`) | `Overshoot` (footprint, budgets of the region, overshoot, sensitivity bounds) |
+| `driver_comparison.ipynb` | `export_indicator_tables_excel` | `bubble_data_by_indicator_<scenario>.xlsx` (source workbooks) | one sheet per indicator |
+| | `create_driver_comparison` | `bubble_chart_*.png` / `.xlsx` | `Bubbles` (M and Y of each displayed item, share) |
+| `biodiversity_process_contribution.py` | `create_biodiversity_process_contribution` | `biodiversity_loss_process_contribution.png` / `.xlsx` | `Contribution` (by process group), `LP detail` |
 
 `Untitled-1.ipynb` is a draft.
 
-**Stacked bars and synthesis by indicator.** One bar per scenario, stacked by consumption category, domestic part solid and imported part hatched. The synthesis in absolute values shows the three threshold levels, the social floor, the PBA value and the change relative to the reference scenario.
+**Stacked bars and synthesis by indicator.** One bar per scenario, stacked by consumption category, domestic part solid and imported part hatched. The synthesis in absolute values shows the three boundary levels, the social floor, the PBA value and the change relative to the reference scenario.
 
-**Radial wheel.** One sector per indicator, one bar per scenario. The height of a bar is the ratio of the footprint to the national "Safe limit", which therefore forms a circle of constant radius. `show_cba` and `show_pba` choose the accounting displayed. The `Bdf` parameter replaces the scenarios by household categories (§ 8).
+**Radial wheel.** One sector per indicator, one bar per scenario. The height of a bar is the ratio of the footprint to the national "Safe Boundary", which therefore forms a circle of constant radius. `show_cba` and `show_pba` choose the accounting displayed. The `Bdf` parameter replaces the scenarios by household categories (§ 8).
 
-**Overshoot of the safe operating space, by region.** One row per indicator, one bubble per scenario, positioned in multiples of the budget. `create_overshoot_safe_space_figure_by_region` works in absolute values and gives each country or region its own budget share, deduced from the region code in the folder name (`processing.resolve_region_code`). A name without a region code is treated as France. With `sensitivity=True`, a segment spans the overshoot levels obtained with the min and max shares; for the World (share 1), it is obtained per capita over the population periods 2019, 2019-2050 and 2019-2100 (`config.WORLD_SENSITIVITY_POPULATION_PERIODS`, `processing.compute_world_period_budget`), which requires `pop_df`. The notebook currently calls it with `sharing_principle="CTR"`.
+**Overshoot of the safe operating space, by region.** One row per indicator, one bubble per scenario, positioned in multiples of the budget. `create_multi_regions_synthesis` works in absolute values and gives each country or region its own budget share, deduced from the region code in the folder name (`processing.resolve_region_code`). A name without a region code is treated as France. With `sensitivity=True`, a segment spans the overshoot levels obtained with the min and max shares; for the World (share 1), it is obtained per capita over the population periods 2019, 2019-2050 and 2019-2100 (`config.WORLD_SENSITIVITY_POPULATION_PERIODS`, `processing.compute_world_period_budget`), which requires `pop_df`. The notebook currently calls it with `sharing_principle="CTR"`. Its group is `REGIONS` (France, EU27, World, RoW Africa in 2019), or `REGIONS_agri` (`AGRI = True` in `All.ipynb`, which switches both displayed groups to their `_agri` variant) for the same geographies restricted to the agri-food system (§ 5.4); like any group ending in `_agri`, the latter reads the `Agri` sheets of `indicator_computing.xlsx` and `boundaries_values.xlsx`.
 
 **Intensities by product.** The notebook works in two steps. It first exports one workbook per scenario, with one sheet per indicator: multipliers `M_dom`, `M_imp`, `M_row` and final demands `Y_dom`, `Y_imp` by product and by category. It then plots the bubbles by reading these workbooks back. The display order is set by the sort row chosen in cell B1 of each sheet, editable in Excel. The multipliers of a category are an average weighted by final demand. The grouping sheet is `M` (5 categories) or `M_split` (9 categories: Vegetal products, Animal products, Sugar, Beverages & Tobacco, Housing, Mobility, Textiles, Final goods nec, Hotel & restaurant, Final services).
 
@@ -995,7 +1035,7 @@ This chain splits the consumption footprint of a scenario between household cate
 | [correspondance_exiobase_coicop.csv](../../Github/ademe_eemrio/correspondance_exiobase_coicop.csv) | Added by PlaneFR | Mapping between the 200 EXIOBASE products and the level-1 COICOP items |
 | `imputation_impacts.ipynb` | Pre-existing | Imputation to households |
 | [agregation_impacts_facteurs.py](../../Github/ademe_eemrio/agregation_impacts_facteurs.py) | Added by PlaneFR | Aggregation by household category |
-| [BdF.ps1](../../Github/ademe_eemrio/BdF.ps1) | Added by PlaneFR, not tracked by git | Runs the three steps for a list of scenarios |
+| [BdF.ps1](../../Github/ademe_eemrio/BdF.ps1) | Added by PlaneFR, not tracked by git | Runs the three steps for each scenario of a display group (`BdF` by default) |
 
 At the time of writing, `BdF.ps1` is not committed, and `agregation_impacts_facteurs.py`, `export_impacts_coicop.py` and `imputation_impacts.ipynb` have uncommitted local changes.
 
@@ -1005,20 +1045,20 @@ At the time of writing, `BdF.ps1` is not committed, and `agregation_impacts_fact
 2. **Imputation.** The notebook splits the footprint of each item between households in proportion to their weighted expenditure on that item. It detects the indicators from the columns of `impacts.csv`. It applies no unit conversion to the PlaneFR indicators, which are missing from its `UNITES_INDICATEURS` table: the factor is 1 and a warning is displayed. Output: `impacts_facteurs.csv` and its legend.
 3. **Aggregation.** `agregation_impacts_facteurs.py` sums the impacts by category and writes a workbook with three sheets: `décile` (four income brackets: `1_3`, `4_7`, `8_9`, `10`), `unité urbaine`, `croisé` (income bracket × rural `R` or urban `U`, e.g. `47U`). Each sheet has a `weight` column, the share of the population, and a total row called `Average` (constant `TOTAL_ROW`, identical to `planefr_lib.config.BDF_TOTAL_ROW`).
 
-`BdF.ps1` associates each scenario with the `Module_PlaneFR` group that displays it, and renames the output `impacts_facteurs_agrégé_<group>.xlsx`:
+`BdF.ps1` takes the scenarios from a display group of `scenario_groups.json` (parameter `-Group`, `BdF` by default), so the scenario names are those of the file. For each entry `<name>` of the group, it processes the folder `<version>/<group>/<name>` (built by `build_scenario_groups.py`) and renames the output `impacts_facteurs_agrégé_<group>_<name>.xlsx`:
 
-```powershell
-$Scenarios = @(
-    @{ Scenario = "SSP2_19_Sus_2050/S1_2050"; Group = "S1+" },
-    @{ Scenario = "Base_year/2019_FR";        Group = "Base_year" }
-)
+```json
+"BdF": {
+  "2019": "2019_raw/2019_FR",
+  "S1+": "2050_raw/SSP2_19_Sus_2050/S1_2050"
+}
 ```
 
-The workbooks produced are therefore read by `planefr_lib` without manual editing.
+produces `impacts_facteurs_agrégé_BdF_2019.xlsx` and `impacts_facteurs_agrégé_BdF_S1+.xlsx`. To change the scenarios processed, edit the `BdF` group and rerun `build_scenario_groups.py --groups BdF`, then `BdF.ps1`. The workbooks produced are read by `planefr_lib` without manual editing.
 
 ### Reading by `planefr_lib`
 
-`io.bdf_file(scenario_group)` looks for `impacts_facteurs_agrégé_<group>.xlsx`, or otherwise a single `impacts_facteurs_agrégé_<group>_*.xlsx` file. Called with `Bdf="décile"`, the radial wheel shows one bar per household category. Each category gets a share of the national budget equal to its demographic weight. In a two-scenario group such as `S1+` (2019_FR + S1_2050), the group's file holds the 2050 scenario, and the base year is read in the `Base_year` group's file (`io.bdf_comparison_file`).
+`io.bdf_file(scenario_group)` looks for `impacts_facteurs_agrégé_<group>.xlsx`, or otherwise the `impacts_facteurs_agrégé_<group>_*.xlsx` files; if there are several, it takes the one of the non-base-year scenario (`config.is_base_year_scenario`). Called with `Bdf="décile"`, the radial wheel shows one bar per household category. Each category gets a share of the national budget equal to its demographic weight. In a two-scenario group such as `BdF` (`2019` + `S1+`), the main file holds the 2050 scenario (`..._BdF_S1+.xlsx`) and the base year is read in `..._BdF_2019.xlsx` (`io.bdf_comparison_file`), to draw the difference.
 
 ---
 
@@ -1049,15 +1089,15 @@ All these files are in `Module_PlaneFR/data/` and are versioned.
 
 | File | Role | Produced by |
 |---|---|---|
-| `characterization_factors.xlsx` | Link between extension rows and indicatores, with factors (sheets `All`, `Agri`) | by hand |
-| `thresholds.xlsx` | Global budgets, unit conversions, precomputed national thresholds (sheets `All`, `Agri`), social floors (`DLS`) | by hand, formulas linked to `budget_shares.xlsx` |
-| `bridge_matrices.xlsx` | Grouping of products into consumption categories (sheets `Final conso. cat.`, `M`, `M_split`) | by hand |
-| `budget_shares.xlsx` | Shares of the global budget by region, UN population | `budget_shares.py` |
-| `Budget share/*.csv`, `Population ONU.xlsx` | Population and GDP, historical and projected | external sources |
-| `SSP/Matching_extensions_EXIOBASE_IMAGE.xlsx` | EXIOBASE-IMAGE matching and computed changes | by hand, then `extract_S_SSPs.py` |
-| `SSP/Scenarios/*.csv` | Outputs of the IMAGE scenarios | external source |
-| `SSP/Nutrients.xlsx` | IMAGE-GNM outputs for nitrogen and phosphorus | external source |
-| `S_extraction.xlsx` | Base-year production and pressures, 2050 production | `export_dS.py` |
+| `Post_processing/indicator_computing.xlsx` | Link between extension rows and indicatores, with factors (sheets `All`, `Agri`) | by hand |
+| `Boundaries/boundaries_values.xlsx` | Global budgets, unit conversions, precomputed national boundaries (sheets `All`, `Agri`), social floors (`DLS`) | by hand, formulas linked to `budget_shares.xlsx` |
+| `Post_processing/bridge_matrices.xlsx` | Grouping of products into consumption categories (sheets `Final conso. cat.`, `M`, `M_split`) | by hand |
+| `Boundaries/budget_shares.xlsx` | Shares of the global budget by region, UN population | `Boundaries/budget_shares.py` |
+| `Boundaries/input_data/*.csv`, `Population ONU.xlsx` | Population and GDP, historical and projected | external sources |
+| `Input_Shocks_MatMat/Matching_EXIOBASE_IMAGE.xlsx` | EXIOBASE-IMAGE matching and computed changes | by hand, then `extract_S_SSPs.py` |
+| `Input_Shocks_MatMat/input_data/*.csv` | Outputs of the IMAGE scenarios | external source |
+| `Input_Shocks_MatMat/input_data/Nutrients.xlsx` | IMAGE-GNM outputs for nitrogen and phosphorus | external source |
+| `Input_Shocks_MatMat/S_extraction.xlsx` | Base-year production and pressures, 2050 production | `export_dS.py` |
 
 Sheets of `bridge_matrices.xlsx`:
 
@@ -1080,7 +1120,7 @@ Sheets of `bridge_matrices.xlsx`:
 | [extract_S_SSPs.py](../../MatMat/matmat-ademe/planeFR/scripts/shocks/b-ssp_shocks/extract_S_SSPs.py) | IMAGE scenarios, `Matching` and `Regions` sheets | Scenario sheets of the matching workbook |
 | [generate_shock_dS.py](../../MatMat/matmat-ademe/planeFR/scripts/shocks/b-ssp_shocks/generate_shock_dS.py) | Matching workbook, base world accounts | `2-shocks/3-SSPs_2050/` |
 | [generate_shock_agri.py](../../MatMat/matmat-ademe/planeFR/scripts/shocks/c-agri_shocks/generate_shock_agri.py) | Original shock sets, `M` sheet | `_agri` shock sets |
-| [build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) | `scenario_groups.json`, engine outputs | Display groups (`ADEME`, `PAPER`, `S1+`, `Base_year`) |
+| [build_scenario_groups.py](../../MatMat/matmat-ademe/planeFR/scripts/6-scenario_groups/build_scenario_groups.py) | `scenario_groups.json`, engine outputs | Display groups (`ADEME`, `CONF`, `BdF`, `2019`) |
 | [planefr_paths.py](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_paths.py) | — | Shared paths, imported by the other Python scripts |
 | [planefr_settings.py](../../MatMat/matmat-ademe/planeFR/scripts/_common/planefr_settings.py) | Settings templates | Template functions and path helpers of `planefr.py`; generated settings in `data/4-PlaneFR/Settings_run/` |
 | [planefr.py](../../MatMat/matmat-ademe/planeFR/scripts/0-chains/planefr.py) | Settings templates, pipeline data | Runs the chains and the MatMat batch steps (§ 5) |
@@ -1118,7 +1158,7 @@ Sheets of `bridge_matrices.xlsx`:
 - An input absent from an industry in the base year cannot appear in it in 2050.
 - In steel, chemicals and non-metallic minerals, only the energy intensity changes: the EXIOBASE energy mix is kept.
 
-**Thresholds**
+**Boundaries**
 
 - The global budget is annual and is allocated between regions in proportion to population (EPC) based on UN projections, or in inverse proportion to GDP per capita (CTR). The population year or period depends on the figure and on the indicator (§ 7.4).
 - A household category gets a share of the national budget equal to its demographic weight.
@@ -1192,18 +1232,18 @@ while not (notebooks_dir / "planefr_lib").exists() and notebooks_dir != notebook
 sys.path.insert(0, str(notebooks_dir))
 
 from planefr_lib import config, io, processing
-from planefr_lib.plot_radial_synthesis import create_radial_synthesis_figure
+from planefr_lib.plot_radial_synthesis import create_radial_synthesis
 
-GROUP = "PAPER"
+GROUP = "CONF"
 cf_df = io.load_characterization_factors(GROUP)
-thresholds_df = io.load_thresholds(GROUP)
+boundaries_df = io.load_boundaries(GROUP)
 bridge_df = io.load_bridge_matrices()
 
 folders = config.get_scenario_folders(exclude_2019=True, scenario_group=GROUP)
-data = [processing.process_scenario(f, cf_df, bridge_df, thresholds_df)[0] for f in folders]
+data = [processing.process_scenario(f, cf_df, bridge_df, boundaries_df)[0] for f in folders]
 
-fig, _ = create_radial_synthesis_figure(
-    data, thresholds_df, [f.name for f in folders],
+fig, _ = create_radial_synthesis(
+    data, boundaries_df, [f.name for f in folders],
     show_cba=True, show_pba=False,
     sharing_principle="EPC",
     scenario_group=GROUP,
@@ -1215,20 +1255,20 @@ fig, _ = create_radial_synthesis_figure(
 | Need | Files to change |
 |---|---|
 | Add an EXIOBASE extension | Add its name to `extension_names` in the templates of `planeFR/parameters/` (adapter, `gmrio_to_snac_s`, engines); add `dom_<ext>` and `imp_<ext>` to the `update_calib_fr` settings and to the corresponding bridge matrix. |
-| Add an indicator | Add its rows to the `All` sheet of `characterization_factors.xlsx`, and a column of the same name to the `All` sheet of `thresholds.xlsx` (budgets, units, conversions). |
-| Change a threshold | `All` sheet of `thresholds.xlsx`. |
+| Add an indicator | Add its rows to the `All` sheet of `indicator_computing.xlsx`, and a column of the same name to the `All` sheet of `boundaries_values.xlsx` (budgets, units, conversions). |
+| Change a boundary | `All` sheet of `boundaries_values.xlsx`. |
 | Change the sharing principle | `sharing_principle` parameter of the plotting function (`None`, `"EPC"`, `"CTR"`); reference columns in `config.py`. |
-| Regenerate the budget shares | Run `data/budget_shares.py`; keep the sheet names and the position of rows and columns, to which `thresholds.xlsx` is linked. |
+| Regenerate the budget shares | Run `data/Boundaries/budget_shares.py`; keep the sheet names and the position of rows and columns, to which `boundaries_values.xlsx` is linked. |
 | Change the trajectory of a domestic pressure | `my_manual_param.xlsx`, then `planefr.py --France_shocks_dS_change`. |
 | Add a French scenario | Put the shock in `2-shocks/1-transitions_2050/`, add a column to `my_manual_param.xlsx` and an entry to `SCENARIO_FOLDER_NAMES` in `compute_ds_x_dom.py`. |
-| Add a rest-of-world scenario | Put the IMAGE CSV file in `data/SSP/Scenarios/`, then run `planefr.py --RoW_shocks_change`. For nitrogen and phosphorus, `Nutrients.xlsx` must contain the `PB_<name>` scenario. |
+| Add a rest-of-world scenario | Put the IMAGE CSV file in `data/Input_Shocks_MatMat/input_data/`, then run `planefr.py --RoW_shocks_change`. For nitrogen and phosphorus, `Nutrients.xlsx` must contain the `PB_<name>` scenario. |
 | Change a projection rule | `Matching` sheet of the matching workbook; constants of `generate_shock_dS.py` if an `A` group is renamed. |
 | Change the base year of the SSP shocks | `path_in.accounts` of the template `planeFR/parameters/4-engine/settings_engine_SSPs.json`, then `planefr.py --RoW_shocks_change`. |
 | Change a calculation parameter of a MatMat step | The matching template of `planeFR/parameters/` (e.g. `m_row_mode` in the `gmrio_to_snac_s` templates). |
 | Change EXIOBASE version | `--version` option of `planefr.py`, after adding the version to `SUPPORTED_VERSIONS_TO_DOI` if needed. |
-| Create a scenario group to display | Declare it in `Module_PlaneFR/data/scenario_groups.json`, then run `build_scenario_groups.py`. |
+| Create a scenario group to display | Declare it in `Module_PlaneFR/data/Outputs_MatMat/scenario_groups.json`, then run `build_scenario_groups.py`. |
 | Run on another machine or folder layout | Keep `Module_PlaneFR` next to `MatMat`, or set `PLANEFR_MODULE_DIR`; adapt the two `config.toml` files. |
-| Feed a group with household data | Add an entry `@{ Scenario = ...; Group = ... }` to `$Scenarios` in `BdF.ps1`. |
+| Feed a group with household data | Declare its scenarios in the `BdF` group of `scenario_groups.json` (or another group, passed with `BdF.ps1 -Group <group>`), run `build_scenario_groups.py`, then `BdF.ps1`. |
 
 > **Possible improvement — tests.** PlaneFR only tests its pipeline command (`planeFR/scripts/tests/`, § 5), not its computations. The most useful targets, before any change to the module:
 > - the formula parser of `extract_S_SSPs.py` (operators, units in parentheses, `OR`, `max`/`min`, yields);
@@ -1270,7 +1310,7 @@ fig, _ = create_radial_synthesis_figure(
 | Extension | Environmental satellite account attached to accounts. |
 | indicator | Planetary-boundary indicator displayed, obtained by characterizing one or several extensions. |
 | SNAC | Single-country National Accounts Consistent: single-country accounts, imports separated from domestic production. |
-| Scenario group | Sub-folder of `Module_PlaneFR/data/<version>/` gathering the scenarios displayed together. |
+| Scenario group | Folder gathering the scenarios displayed together: a display group of `Module_PlaneFR/data/Outputs_MatMat/<version>/` (`scenario_groups.json`) or an engine group of `<version>/2050_raw/`. |
 | CBA, PBA | Consumption-based accounting; production-based accounting. |
 | EPC, CTR | Principles for sharing the global budget: equal per capita; capability to reduce. |
 | DLS | Decent living standards: social floor. |

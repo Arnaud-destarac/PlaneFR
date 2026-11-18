@@ -102,15 +102,15 @@ def filter_and_weight_scalar(df, extension_factor_map):
 
 
 # ============================================================================
-# SAFE LOOKUPS IN thresholds_df (avoids repeating the same try/except everywhere)
+# SAFE LOOKUPS IN boundaries_df (avoids repeating the same try/except everywhere)
 # ============================================================================
 
 
-def lookup_cell(thresholds_df, row_name, column_name, require_positive=False):
-    """Get thresholds_df.loc[row_name, column_name] as a float, safely.
+def lookup_cell(boundaries_df, row_name, column_name, require_positive=False):
+    """Get boundaries_df.loc[row_name, column_name] as a float, safely.
 
     Args:
-        require_positive: True for the LB/UB thresholds (must be strictly
+        require_positive: True for the LB/UB boundaries (must be strictly
             positive to be valid); False for a conversion factor, which must
             just be non-zero (but could legitimately be negative).
 
@@ -119,9 +119,9 @@ def lookup_cell(thresholds_df, row_name, column_name, require_positive=False):
         or if it fails the require_positive test.
     """
     try:
-        if row_name not in thresholds_df.index or column_name not in thresholds_df.columns:
+        if row_name not in boundaries_df.index or column_name not in boundaries_df.columns:
             return None
-        value = thresholds_df.loc[row_name, column_name]
+        value = boundaries_df.loc[row_name, column_name]
         if pd.isna(value):
             return None
         value = float(value)
@@ -134,16 +134,16 @@ def lookup_cell(thresholds_df, row_name, column_name, require_positive=False):
         return None
 
 
-def lookup_first_text(thresholds_df, row_names, column_name):
-    """Try several candidate row names in order (useful because thresholds.xlsx
+def lookup_first_text(boundaries_df, row_names, column_name):
+    """Try several candidate row names in order (useful because boundaries_values.xlsx
     is not always spelled identically), return the first non-NaN text found,
     or "" otherwise."""
     if isinstance(row_names, str):
         row_names = [row_names]
     try:
         for row_name in row_names:
-            if row_name in thresholds_df.index and column_name in thresholds_df.columns:
-                val = thresholds_df.loc[row_name, column_name]
+            if row_name in boundaries_df.index and column_name in boundaries_df.columns:
+                val = boundaries_df.loc[row_name, column_name]
                 if val is not None and str(val).lower() != "nan":
                     return str(val)
     except (KeyError, TypeError):
@@ -210,10 +210,10 @@ def lookup_dls(dls_df, dls_row_name, indicator_name):
     return lookup_cell(dls_df, stripped_index[dls_row_name], indicator_name, require_positive=True)
 
 
-def lookup_threshold(thresholds_df, threshold_row_name, indicator_name):
-    """LOWER/LB/UB threshold read as is in thresholds.xlsx (rows "Equality
+def lookup_boundary(boundaries_df, boundary_row_name, indicator_name):
+    """LOWER/LB/UB boundary read as is in boundaries_values.xlsx (rows "Equality
     (Lower bound)"/"Equality"/"Equality (Upper bound)"), strictly positive or None."""
-    return lookup_cell(thresholds_df, threshold_row_name, indicator_name, require_positive=True)
+    return lookup_cell(boundaries_df, boundary_row_name, indicator_name, require_positive=True)
 
 
 # ============================================================================
@@ -238,7 +238,7 @@ def lookup_population(pop_df, period, region_code):
 # reference share and min/max bounds over the SSP variants). The budgets
 # obtained are in absolute values ("Figures unit"), never per capita.
 
-# threshold_kind -> row of thresholds.xlsx/"All" giving the world budget.
+# boundary_kind -> row of boundaries_values.xlsx/"All" giving the world budget.
 _WORLD_BUDGET_ROW_FOR_KIND = {
     "lower": config.WORLD_BUDGET_ROW_LOWER,
     "lb": config.WORLD_BUDGET_ROW_LB,
@@ -262,13 +262,44 @@ def resolve_region_code(scenario_name, codes, default=config.DEFAULT_REGION_CODE
     `codes` may also be a shares DataFrame (io.load_budget_shares_df), whose
     index is then used.
     """
+    region_names = None
     if isinstance(codes, pd.DataFrame):
+        if config.BUDGET_SHARE_REGION_COLUMN in codes.columns:
+            region_names = codes[config.BUDGET_SHARE_REGION_COLUMN]
         codes = codes.index
     codes = {str(code).upper(): code for code in codes}
+
+    # Full region name ("FRANCE", "WORLD", "AFRICA"...): see _region_name_lookup.
+    name_key = _normalize_region_name(scenario_name)
+    name_lookup = _region_name_lookup(codes, None if region_names is None
+                                      else region_names.astype(str).items())
+    # The W row is named "Total 49 regions" in budget_shares.xlsx.
+    if name_key == "WORLD" and config.WORLD_REGION_CODE in codes:
+        return codes[config.WORLD_REGION_CODE]
+    if name_key in name_lookup:
+        return codes[name_lookup[name_key]]
+
     for token in re.split(r"[^A-Za-z0-9]+", str(scenario_name)):
         if token and token.upper() in codes:
             return codes[token.upper()]
     return default
+
+
+def _normalize_region_name(name):
+    """Upper-case, alphanumeric only, without "Rest of" / "RoW" / "region":
+    "Rest of Africa" -> "AFRICA", "China region" -> "CHINA"."""
+    name = re.sub(r"\b(rest of|row|region)\b", " ", str(name), flags=re.IGNORECASE)
+    return re.sub(r"[^A-Za-z0-9]+", "", name).upper()
+
+
+def _region_name_lookup(codes, region_names):
+    """{normalized region name: code (upper case)}, from the "Region" column of
+    budget_shares.xlsx (region_names: ((code, name), ...)): "France" -> FR,
+    "RoW Africa" -> WF, "China" -> CN..."""
+    lookup = {}
+    for code, name in (region_names or ()):
+        lookup.setdefault(_normalize_region_name(name), str(code).upper())
+    return lookup
 
 
 def find_share_column(shares_df, sharing_principle, variant):
@@ -319,8 +350,8 @@ def lookup_budget_share(shares_df, region_code, sharing_principle, variant="ref"
     return value if value > 0 else None
 
 
-def compute_region_budget(thresholds_df, shares_df, indicator_name, region_code,
-                          sharing_principle, variant="ref", threshold_kind="lb",
+def compute_region_budget(boundaries_df, shares_df, indicator_name, region_code,
+                          sharing_principle, variant="ref", boundary_kind="lb",
                           column_pattern=None):
     """LOWER/LB/UB budget of a country/region, in absolute values, obtained by
     applying to the world budget the share of `region_code` read in shares_df.
@@ -328,12 +359,12 @@ def compute_region_budget(thresholds_df, shares_df, indicator_name, region_code,
     Formula:
         region_budget = World_budget(LOWER, LB or UB) / Budget_conversion * Region_share
 
-    where World_budget is read on the rows "Lower safe bound"/"Safe limit"/
-    "Upper safe bound" of thresholds.xlsx/"All" (unit "Unit budget") and
+    where World_budget is read on the rows "Lower Safe Boundary"/"Safe Boundary"/
+    "High-Risk Boundary" of boundaries_values.xlsx/"All" (unit "Unit budget") and
     Budget_conversion on "Unit conversion budget" (-> "Figures unit").
 
     Args:
-        threshold_kind: "lower", "lb" or "ub".
+        boundary_kind: "lower", "lb" or "ub".
         variant: "ref", "min" or "max" (see find_share_column).
         column_pattern: regex pattern of the share column to read, taking
             precedence over (sharing_principle, variant) -- see lookup_budget_share.
@@ -342,12 +373,12 @@ def compute_region_budget(thresholds_df, shares_df, indicator_name, region_code,
         float, or None if a required piece of data is missing (world budget
         not filled in for this indicator, missing conversion, unknown share).
     """
-    if threshold_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
-        raise ValueError(f"Unknown threshold_kind: {threshold_kind!r}")
+    if boundary_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
+        raise ValueError(f"Unknown boundary_kind: {boundary_kind!r}")
 
-    world_budget = lookup_cell(thresholds_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
+    world_budget = lookup_cell(boundaries_df, _WORLD_BUDGET_ROW_FOR_KIND[boundary_kind],
                                indicator_name, require_positive=True)
-    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
+    world_conversion = lookup_cell(boundaries_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
     share = lookup_budget_share(shares_df, region_code, sharing_principle, variant, column_pattern)
     if world_budget is None or not world_conversion or share is None:
         return None
@@ -355,8 +386,8 @@ def compute_region_budget(thresholds_df, shares_df, indicator_name, region_code,
     return world_budget / world_conversion * share
 
 
-def compute_world_period_budget(thresholds_df, pop_df, indicator_name, period,
-                                threshold_kind="lb",
+def compute_world_period_budget(boundaries_df, pop_df, indicator_name, period,
+                                boundary_kind="lb",
                                 pressure_period=config.WORLD_PRESSURE_POPULATION_PERIOD):
     """"Equivalent" LOWER/LB/UB world budget (absolute values) when the limit
     is reasoned per capita over a given population period.
@@ -374,12 +405,12 @@ def compute_world_period_budget(thresholds_df, pop_df, indicator_name, period,
     Returns:
         float, or None if a required piece of data is missing.
     """
-    if threshold_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
-        raise ValueError(f"Unknown threshold_kind: {threshold_kind!r}")
+    if boundary_kind not in _WORLD_BUDGET_ROW_FOR_KIND:
+        raise ValueError(f"Unknown boundary_kind: {boundary_kind!r}")
 
-    world_budget = lookup_cell(thresholds_df, _WORLD_BUDGET_ROW_FOR_KIND[threshold_kind],
+    world_budget = lookup_cell(boundaries_df, _WORLD_BUDGET_ROW_FOR_KIND[boundary_kind],
                                indicator_name, require_positive=True)
-    world_conversion = lookup_cell(thresholds_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
+    world_conversion = lookup_cell(boundaries_df, config.WORLD_CONVERSION_ROW_ABS, indicator_name)
     if world_budget is None or not world_conversion:
         return None
 
@@ -394,7 +425,7 @@ def compute_world_period_budget(thresholds_df, pop_df, indicator_name, period,
 
 
 def process_single_indicator_scenario(indicator_name, lp_name, scenario_folder_path,
-                                        cf_df, bridge_matrices_df, thresholds_df):
+                                        cf_df, bridge_matrices_df, boundaries_df):
     """Footprint (dom + imp, + F_Y if applicable) of a indicator for a given
     LP and scenario, broken down by consumption category through the bridge
     matrix. Also computes "pba" (production-based, F_x_dom + F_Y, a single
@@ -440,7 +471,7 @@ def process_single_indicator_scenario(indicator_name, lp_name, scenario_folder_p
         result_imp = vector_imp.copy()
         result_dom = vector_dom.copy()
 
-    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
+    conversion_factor = lookup_cell(boundaries_df, config.CONVERSION_ROW_ABS, indicator_name)
     if conversion_factor is not None:
         result_imp = result_imp / conversion_factor
         result_dom = result_dom / conversion_factor
@@ -464,7 +495,7 @@ def process_single_indicator_scenario(indicator_name, lp_name, scenario_folder_p
     }
 
 
-def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, thresholds_df):
+def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, boundaries_df):
     """Process a complete scenario: aggregate all the LPs of a same indicator.
 
     Returns:
@@ -478,7 +509,7 @@ def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, thresholds
         for lp_name in lp_list:
             result = process_single_indicator_scenario(
                 indicator_name, lp_name, scenario_folder_path,
-                cf_df, bridge_matrices_df, thresholds_df,
+                cf_df, bridge_matrices_df, boundaries_df,
             )
             if result is None:
                 continue
@@ -501,7 +532,7 @@ def process_scenario(scenario_folder_path, cf_df, bridge_matrices_df, thresholds
     return data_by_indicator, indicator_to_lp
 
 
-def process_indicator_lp_breakdown(indicator_name, scenario_folder_path, cf_df, thresholds_df):
+def process_indicator_lp_breakdown(indicator_name, scenario_folder_path, cf_df, boundaries_df):
     """Absolute footprint (dom + imp + F_Y) of a indicator for a scenario,
     broken down by LP (Earth-system process) of origin -- unlike
     process_single_indicator_scenario/process_scenario, which break down by
@@ -521,7 +552,7 @@ def process_indicator_lp_breakdown(indicator_name, scenario_folder_path, cf_df, 
     lp_list = indicator_to_lp.get(indicator_name, [])
 
     is_world_europe = not scenario_has_dom_imp_split(scenario_folder_path)
-    conversion_factor = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
+    conversion_factor = lookup_cell(boundaries_df, config.CONVERSION_ROW_ABS, indicator_name)
 
     lp_values = {}
     for lp_name in lp_list:
@@ -653,12 +684,12 @@ def _pack_totals(cba, pba):
     }
 
 
-def process_scenario_absolute(scenario_folder_path, cf_df, thresholds_df):
+def process_scenario_absolute(scenario_folder_path, cf_df, boundaries_df):
     """Total CBA and PBA footprint of a scenario, in absolute values ("Figures
-    unit" of thresholds.xlsx), for all indicators.
+    unit" of boundaries_values.xlsx), for all indicators.
 
     Formula: footprint = exiobase_total / Conversion ("Unit conversion Exiobase").
-    Intended for plot_overshoot.create_overshoot_safe_space_figure_by_region,
+    Intended for plot_overshoot.create_multi_regions_synthesis,
     where the footprint of a country is compared with its share of the world
     budget.
 
@@ -677,7 +708,7 @@ def process_scenario_absolute(scenario_folder_path, cf_df, thresholds_df):
 
     data_by_indicator = {}
     for indicator_name, (total_cba, total_pba) in totals.items():
-        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_ABS, indicator_name)
+        conversion = lookup_cell(boundaries_df, config.CONVERSION_ROW_ABS, indicator_name)
         if conversion is not None:
             total_cba, total_pba = total_cba / conversion, total_pba / conversion
         data_by_indicator[indicator_name] = _pack_totals(total_cba, total_pba)
@@ -698,7 +729,7 @@ def get_population(scenario_path, pop_df):
     return lookup_population(pop_df, period, region_code)
 
 
-def process_scenario_per_capita(scenario_folder_path, cf_df, thresholds_df, pop_df):
+def process_scenario_per_capita(scenario_folder_path, cf_df, boundaries_df, pop_df):
     """Per-capita CBA (consumption-based, d_cba) and PBA (production-based,
     F_x_dom) footprint for all the indicators of a scenario.
 
@@ -717,7 +748,7 @@ def process_scenario_per_capita(scenario_folder_path, cf_df, thresholds_df, pop_
 
     data_by_indicator = {}
     for indicator_name, (total_cba, total_pba) in totals.items():
-        conversion = lookup_cell(thresholds_df, config.CONVERSION_ROW_PER_CAPITA, indicator_name)
+        conversion = lookup_cell(boundaries_df, config.CONVERSION_ROW_PER_CAPITA, indicator_name)
         divisor = population * (conversion if conversion is not None else 1.0)
         data_by_indicator[indicator_name] = _pack_totals(total_cba / divisor, total_pba / divisor)
 

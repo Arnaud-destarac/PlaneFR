@@ -1,0 +1,30 @@
+{
+  "description": "Scenario groups displayed by the figures and assembled from engine outputs. Each group is a sub-folder of data/<version>/; each entry maps the displayed folder name to its source, a scenario folder written by the pipeline, relative to data/<version>/ (2019_raw/<scenario> or 2050_raw/<group>/<scenario>). Built by MatMat/matmat-ademe/scripts/build_scenario_groups.py (last step of the pipeline). Do not edit the group folders by hand: they are overwritten.",
+  "groups": {
+    "ADEME": {
+      "2015": "2050_raw/no_SSP/Base_year_2015",
+      "S1": "2050_raw/no_SSP/S1_2050",
+      "S2": "2050_raw/no_SSP/S2_2050",
+      "S3": "2050_raw/no_SSP/S3_2050",
+      "S4": "2050_raw/no_SSP/S4_2050",
+      "TREND": "2050_raw/no_SSP/TEND_2050"
+    },
+    "CONF": {
+      "2015": "2050_raw/no_SSP/Base_year_2015",
+      "S1": "2050_raw/no_SSP/S1_2050",
+      "S1+": "2050_raw/SSP2_19_Sus_2050/S1_2050",
+      "S4": "2050_raw/no_SSP/S4_2050",
+      "TREND": "2050_raw/no_SSP/TEND_2050"
+    },
+    "BdF": {
+      "2019": "2019_raw/2019_FR",
+      "S1+": "2050_raw/SSP2_19_Sus_2050/S1_2050"
+    },
+    "REGIONS": {
+      "FRANCE": "2019_raw/2019_FR",
+      "EU27": "2019_raw/2019_EU27",
+      "WORLD": "2019_raw/2019_W",
+      "RoW AFRICA": "2019_raw/2019_WF"
+    }
+  }
+}

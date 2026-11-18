@@ -1,5 +1,5 @@
 """
-Adds to the "All" sheet of characterization_factors.xlsx one row per column
+Adds to the "All" sheet of indicator_computing.xlsx one row per column
 (exiobase stressor) of "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
 whose sum over the rows in PDF.m2.yr units (biodiversity metric of Impact World+)
 is non-zero.
@@ -15,8 +15,7 @@ For each retained column:
     - "Units"                     -> left empty
     - "Characterization factors"  -> sum of the values (PDF.m2.yr rows) of the column
 
-One-shot script: the Impact World+ file is not kept in data/, put it back next
-to this script before running it again.
+The Impact World+ file is read in the input_data/ folder next to this script.
 """
 
 import shutil
@@ -25,13 +24,13 @@ from pathlib import Path
 import openpyxl
 
 DATA_DIR = Path(__file__).resolve().parent
-CF_PATH = DATA_DIR / "characterization_factors.xlsx"
-IMPACT_WORLD_PATH = DATA_DIR / "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
+CF_PATH = DATA_DIR / "indicator_computing.xlsx"
+IMPACT_WORLD_PATH = DATA_DIR / "input_data" / "impact_world_plus_2.2.1_expert_version_exiobase_3.9_and_after.xlsx"
 
 SHEET_CF = "All"
 SHEET_IMPACT_WORLD = "Sheet1"
 
-# Columns of the "All" sheet of characterization_factors.xlsx
+# Columns of the "All" sheet of indicator_computing.xlsx
 COL_INDICATOR = 1  # A
 COL_EXIOBASE_GROUP = 2  # B
 COL_EXIOBASE_STRESSOR = 3  # C
