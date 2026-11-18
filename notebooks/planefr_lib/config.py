@@ -76,7 +76,7 @@ REFERENCE_SCENARIO_NAME = "Base_year_2015"
 # Scenario group displayed by default: sub-folder of BASE_DATA_DIR containing
 # the 2050 transition scenarios computed on a given set of accounts ("no_SSP"
 # for the Base_year_2015 accounts, "SSP1_2050", "SSP2_2050"... for the accounts
-# projected along an SSP, see run_engine_batch.ps1 of matmat-ademe). Can be
+# projected along an SSP, see the France engine step of planeFR/scripts/0-chains/planefr.py in matmat-ademe). Can be
 # redirected with the environment variable PLANEFR_SCENARIO_GROUP, or per
 # notebook with the scenario_group parameter of get_scenario_folders.
 # "" = old scenarios placed directly in BASE_DATA_DIR.
