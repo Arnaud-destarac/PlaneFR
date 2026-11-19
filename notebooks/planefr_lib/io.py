@@ -75,8 +75,11 @@ def load_bridge_m_matrix(sheet_name="M"):
 
     Args:
         sheet_name: "M" (5 categories: Food, Housing, Mobility, Final goods,
-            Final services) or "M_split" (finer breakdown, 12 categories).
-            All the columns after "sector" are read as categories.
+            Final services) or "M_split" (finer breakdown, 14 categories).
+            All the columns after "sector" are read as categories. In
+            "M_split", each product belongs to a single category (categories
+            additive); in "M", 31 energy products belong to 2 or 3 categories
+            (Housing, Mobility, Final goods).
 
     Not to be confused with the 'Alimentation' sheet of the same workbook,
     which is a fine breakdown of food products (rice, beef, pork...).
@@ -307,6 +310,14 @@ def load_f_y_tot_france(scenario_folder_path, lp_name):
     France scenario, if this file exists for this LP (e.g. present for water/land)."""
     file_path = Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}" / "F_Y_tot.pkl"
     return pd.read_pickle(file_path) if file_path.exists() else None
+
+
+def f_y_in_d_cba_france(scenario_folder_path, lp_name):
+    """True if the d_cba of dom_{lp} already includes the direct emissions of
+    the final demand: extensions in product format, computed with S_Y
+    (dom_{lp}/S_Y.pkl present, e.g. ghg_combustion). Their F_Y_tot.pkl then
+    only counts in the PBA, not in the CBA (it would be counted twice)."""
+    return (Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}" / "S_Y.pkl").exists()
 
 
 # ============================================================================

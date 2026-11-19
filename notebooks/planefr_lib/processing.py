@@ -458,6 +458,8 @@ def process_single_indicator_scenario(indicator_name, lp_name, scenario_folder_p
     pba_raw = filter_and_weight_scalar(f_x_dom_df, extension_factor_map) if f_x_dom_df is not None else 0.0
     if f_y_tot_value is not None:
         pba_raw += f_y_tot_value
+        if io.f_y_in_d_cba_france(scenario_folder_path, lp_name):
+            f_y_tot_value = None  # already in d_cba (S_Y): PBA only
 
     # The bridge breaks down by consumption category; it only applies to the
     # France scenarios (World/Europe remain a single aggregated total).
@@ -579,7 +581,7 @@ def process_indicator_lp_breakdown(indicator_name, scenario_folder_path, cf_df, 
                     total += filter_and_weight_scalar(d_cba, ext_map)
                     has_data = True
             f_y_tot = io.load_f_y_tot_france(scenario_folder_path, lp_name)
-            if f_y_tot is not None:
+            if f_y_tot is not None and not io.f_y_in_d_cba_france(scenario_folder_path, lp_name):
                 total += filter_and_weight_scalar(f_y_tot, ext_map)
                 has_data = True
 
@@ -616,7 +618,8 @@ def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
 
     CBA adds dom + imp (France) or reads the single file (World/Europe); PBA
     only uses the domestic part. F_Y_tot.pkl, if present for an LP, is added
-    to both totals. ghg_combustion is ignored for World/Europe (missing from
+    to both totals -- to the PBA only if d_cba already includes it (extension
+    with S_Y, e.g. ghg_combustion, see io.f_y_in_d_cba_france). ghg_combustion is ignored for World/Europe (missing from
     these data).
 
     Returns:
@@ -663,7 +666,8 @@ def _scenario_footprint_totals(scenario_folder_path, cf_df, is_world_europe):
                 f_y_tot = io.load_f_y_tot_france(scenario_folder_path, lp_name)
                 if f_y_tot is not None:
                     f_y_tot_total = filter_and_weight_scalar(f_y_tot, ext_map)
-                    total_cba += f_y_tot_total
+                    if not io.f_y_in_d_cba_france(scenario_folder_path, lp_name):
+                        total_cba += f_y_tot_total  # otherwise already in d_cba (S_Y)
                     total_pba += f_y_tot_total
                     has_data = True
 

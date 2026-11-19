@@ -11,11 +11,12 @@ matching) -- see build_bridge_to_y_mapping().
 
 Two-step pipeline:
   1. export_indicator_tables_excel: 1 workbook per scenario, 1 sheet per
-     indicator (columns = sectors + categories, rows = M_imp/M_dom/
-     M_row/Y_imp/Y_dom and M*Y products), sectors sorted according to the row
-     chosen in B1 (editable by hand in Excel).
+     indicator, with a block of rows for the categories (on top) and another
+     for the sectors (rows = x_dom/S_dom/F_x_dom/M_imp/M_dom/M_row/Y_imp/Y_dom and
+     M*Y products), each sorted according to the row chosen in B1 (editable
+     by hand in Excel).
   2. create_driver_comparison: bubble chart read back from these workbooks, by
-     consumption categories or by first n sectors (type="categories"/"products"),
+     first n consumption categories or first n sectors (type="categories"/"products"),
      baseline alone or compared with a 2nd scenario (scenarios=False/True).
 """
 
@@ -131,21 +132,99 @@ def aggregate_y_for_sizes(y_5cols, bridge_m, bridge_to_y_col):
     return pd.Series(out)
 
 
+def load_x_dom(scenario_folder_path):
+    """Domestic production x_dom: first 200 rows of system/x.pkl (Series, system order)."""
+    return pd.read_pickle(Path(scenario_folder_path) / "system" / "x.pkl").iloc[:200, 0]
+
+
+def _load_s_dom(lp_dir, x_dom):
+    """Direct intensity of the domestic sectors of an LP (rows = stressors,
+    columns = the 200 domestic sectors, same format as S_x_dom.pkl):
+      - S_x_dom.pkl if present;
+      - otherwise, F_x_dom / x_dom when F_x_dom is by sector (200 columns:
+        all the extensions since reformat_d_cba_k.py writes ghg_combustion and
+        raw_materials in this format);
+      - otherwise (data reformatted by an earlier version):
+      - otherwise, extensions in product format (F_Z.pkl 400 x 200 and
+        F_Y.pkl 400 x 6, rows = products burned / extracted, columns = using
+        sectors / final demand). Stressors = rows of S_Z.pkl:
+          * a single one (ghg_combustion: CO2) -> emissions of the sector that
+            BURNS the fuel: S[j] = sum over the 400 rows (domestic + imported
+            fuels) of column j of F_Z / x_j. F_Y (combustion by households)
+            belongs to no sector and is not included, so S.x != F_x_dom;
+          * one per product (raw_materials: material extracted) -> extraction
+            attributed to the extracting sector: F[i] = sum of the domestic row
+            i of F_Z + F_Y (= F_x_dom[i] exactly), S[i, i] = F[i] / x_i, row
+            "product i" non-zero only in sector i (totals such as "RMC" dropped).
+    0 where x_dom = 0. None if no usable file."""
+    s_path, f_path = lp_dir / "S_x_dom.pkl", lp_dir / "F_x_dom.pkl"
+    if s_path.exists():
+        return pd.read_pickle(s_path)
+    x = x_dom.to_numpy(dtype=float)
+    inv_x = np.divide(1.0, x, out=np.zeros_like(x), where=x != 0)
+    if f_path.exists():
+        f_df = pd.read_pickle(f_path)
+        if f_df.shape[1] == len(x_dom):
+            return f_df * inv_x  # positional: columns of F = rows of x
+
+    fz_path, fy_path, sz_path = lp_dir / "F_Z.pkl", lp_dir / "F_Y.pkl", lp_dir / "S_Z.pkl"
+    if not (fz_path.exists() and sz_path.exists()):
+        return None
+    f_z = pd.read_pickle(fz_path)
+    f_y = pd.read_pickle(fy_path) if fy_path.exists() else None
+
+    def domestic_rows(df):
+        if isinstance(df.index, pd.MultiIndex) and "origin" in df.index.names:
+            return df[df.index.get_level_values("origin") == "domestic"]
+        return df.iloc[:len(x)]
+
+    columns = x_dom.index.droplevel(0) if isinstance(x_dom.index, pd.MultiIndex) else x_dom.index
+    stressors = [s[0] if isinstance(s, tuple) else s for s in pd.read_pickle(sz_path).index]
+    if len(stressors) == 1:
+        # Sector that burns the fuel: column sums of F_Z (columns = the 200 domestic sectors)
+        burned = f_z.sum(axis=0).to_numpy(dtype=float)
+        return pd.DataFrame([burned * inv_x], index=stressors, columns=columns)
+
+    # Extracting sector: domestic row sums of F_Z + F_Y
+    f_by_sector = domestic_rows(f_z).sum(axis=1).to_numpy(dtype=float)
+    if f_y is not None:
+        f_by_sector = f_by_sector + domestic_rows(f_y).sum(axis=1).to_numpy(dtype=float)
+    s_by_sector = f_by_sector * inv_x
+    sector_names = list(columns.get_level_values(-1))
+    matched = [name for name in stressors if name in sector_names]  # drops totals such as "RMC"
+    s = np.zeros((len(matched), len(x)))
+    for i, name in enumerate(matched):
+        j = sector_names.index(name)
+        s[i, j] = s_by_sector[j]
+    return pd.DataFrame(s, index=matched, columns=columns)
+
+
 def compute_indicator_m_sector_vectors(scenario_folder_path, cf_df):
-    """M_dom/M_imp/M_row by sector (200 products), aggregated by indicator
-    (sum over all the associated LPs, weighted by the characterization factors).
+    """M_dom/M_imp/M_row (and S_dom: direct intensity dom_{lp}/S_x_dom.pkl) by
+    sector (200 products), aggregated by indicator (sum over all the associated
+    LPs, weighted by the characterization factors).
 
     Returns:
-        {name: {"M_dom", "M_imp", "M_row"}} -- Series indexed by sector.
+        {name: {"M_dom", "M_imp", "M_row", "S_dom"}} -- Series indexed by sector.
     """
     indicator_to_lp = processing.get_unique_indicators(cf_df)
+    x_dom = load_x_dom(scenario_folder_path)
 
     sector_vectors = {}
     for indicator_name, lp_list in indicator_to_lp.items():
         agg_dom = agg_imp = agg_row = None
+        agg_s = None
         extension_factor_map = processing.build_extension_factor_map(cf_df, indicator_name)
 
         for lp_name in lp_list:
+            lp_dir = Path(scenario_folder_path) / "extensions" / f"dom_{lp_name}"
+            s_df = _load_s_dom(lp_dir, x_dom)
+            if s_df is not None:
+                v_s = processing.filter_and_weight_vector(s_df, extension_factor_map)
+                # Start from the first vector (not an empty Series): adding to
+                # an empty Series sorts the index alphabetically, which breaks
+                # the positional alignment on the bridge (align_series_to_bridge).
+                agg_s = v_s.copy() if agg_s is None else agg_s.add(v_s, fill_value=0)
             m_dom_df = io.load_m_matrix(scenario_folder_path, lp_name, "dom")
             m_imp_df = io.load_m_matrix(scenario_folder_path, lp_name, "imp")
             m_row_df = io.load_m_matrix(scenario_folder_path, lp_name, "row")
@@ -166,7 +245,8 @@ def compute_indicator_m_sector_vectors(scenario_folder_path, cf_df):
         if agg_dom is None:
             continue
 
-        sector_vectors[indicator_name] = {"M_dom": agg_dom, "M_imp": agg_imp, "M_row": agg_row}
+        sector_vectors[indicator_name] = {"M_dom": agg_dom, "M_imp": agg_imp, "M_row": agg_row,
+                                         "S_dom": agg_s if agg_s is not None else pd.Series(dtype=float)}
 
     return sector_vectors
 
@@ -191,7 +271,11 @@ def _excel_sheet_name(name, used_names):
     return candidate
 
 
-TOTAL_FOOTPRINT_ROW = "M_imp*Y_dom+M_dom*Y_dom+M_row*Y_imp"
+# Total footprint of an item: M_imp*Y_dom + M_dom*Y_dom + M_row*Y_imp (= d_cba,
+# up to the exports). TOTAL_FOOTPRINT_ROW_LEGACY: label of this row in the
+# workbooks written before it was renamed, still accepted when reading back.
+TOTAL_FOOTPRINT_ROW = "d_cba"
+TOTAL_FOOTPRINT_ROW_LEGACY = "M_imp*Y_dom+M_dom*Y_dom+M_row*Y_imp"
 
 # Labels of column A delimiting the "source data" block of a sheet: written by
 # _write_sortable_sheet, read back by load_indicator_tables_excel. The
@@ -201,6 +285,8 @@ SOURCE_BLOCK_TITLE = "Source data (bridge order, unsorted)"
 KEY_ROW_LABEL = "Sort key"
 RANK_ROW_LABEL = "Rank"  # rank of the sectors; also used to count the sectors when reading back
 CATEGORY_RANK_ROW_LABEL = "Rank (categories)"
+CATEGORY_KEY_ROW_LABEL = "Sort key (categories)"  # present only in the layout with separate blocks
+SECTOR_SOURCE_HEADER = "Sectors"  # column A of the header of the sectors source block
 SOURCE_BLOCK_TITLE_LEGACY = "Données sources (ordre du bridge, non triées)"
 KEY_ROW_LABEL_LEGACY = "Clé de tri"
 RANK_ROW_LABEL_LEGACY = "Rang"
@@ -222,14 +308,18 @@ EXCLUDED_SECTORS = (
 
 def build_indicator_tables(scenario_folder_path, cf_df, bridge_m):
     """Table by indicator: 1 column per sector (200 products of the M bridge)
-    + 1 column per consumption category, 1 row per data item (M_imp, M_dom,
-    M_row, Y_imp, Y_dom, then the M*Y products and their sums).
+    + 1 column per consumption category, 1 row per data item (x_dom, S_dom,
+    F_x_dom, M_imp, M_dom, M_row, Y_imp, Y_dom, then the M*Y products and their
+    sums).
 
     Category columns: M aggregated by a mean weighted by Y (same computation as
-    the bubble chart), Y aggregated by sum. The M*Y products of a category are
-    therefore exactly the sum of the M_i*Y_i of its sectors.
+    the bubble chart), Y and x_dom aggregated by sum, S_dom by a mean weighted
+    by x_dom. F_x_dom = S_dom * x_dom (characterized direct pressure of the
+    domestic production). The M*Y products and F_x_dom of a category are
+    therefore exactly the sum of those of its sectors.
 
-    Sources: M_dom = dom_{lp}/M_k.pkl, M_imp = imp_{lp}/M_k.pkl, M_row =
+    Sources: x_dom = first 200 rows of system/x.pkl, S_dom = dom_{lp}/S_x_dom.pkl
+    or F_x_dom / x_dom (see _load_s_dom), M_dom = dom_{lp}/M_k.pkl, M_imp = imp_{lp}/M_k.pkl, M_row =
     imp_{lp}/M_RoW.pkl, Y = system/Y.pkl without GFCF or Exports (Y_dom = first
     200 rows, Y_imp = next 200). Hence, by sector:
         M_dom*Y_dom             = dom_{lp}/d_cba_k
@@ -257,9 +347,20 @@ def build_indicator_tables(scenario_folder_path, cf_df, bridge_m):
     y_dom_cat = aggregate_y_for_sizes(y_dom_5, bridge_m, bridge_to_y_col)
     y_imp_cat = aggregate_y_for_sizes(y_imp_5, bridge_m, bridge_to_y_col)
 
+    # Domestic production x_dom (first 200 rows of system/x.pkl), in the same
+    # 5-identical-columns format as Y: summed by category, weight of S_dom.
+    x_dom = load_x_dom(scenario_folder_path)
+    x_dom_5 = pd.concat([x_dom] * len(y_dom_5.columns), axis=1)
+    x_dom_5.columns = y_dom_5.columns
+    x_dom_sector = align_series_to_bridge(x_dom, bridge_m)
+    x_dom_cat = aggregate_y_for_sizes(x_dom_5, bridge_m, bridge_to_y_col)
+
     tables = {}
     for indicator_name, vecs in sector_vectors.items():
         rows = {
+            "x_dom": (x_dom_sector, x_dom_cat),
+            "S_dom": (align_series_to_bridge(vecs["S_dom"], bridge_m),
+                      weighted_mean_by_category(vecs["S_dom"], x_dom_5, bridge_m, bridge_to_y_col)),
             "M_imp": (align_series_to_bridge(vecs["M_imp"], bridge_m),
                       weighted_mean_by_category(vecs["M_imp"], y_dom_5, bridge_m, bridge_to_y_col)),
             "M_dom": (align_series_to_bridge(vecs["M_dom"], bridge_m),
@@ -272,6 +373,11 @@ def build_indicator_tables(scenario_folder_path, cf_df, bridge_m):
         table = pd.DataFrame(
             {key: pd.concat([sector, cat]) for key, (sector, cat) in rows.items()}
         ).T
+        # Direct pressure of domestic production (characterized F_x_dom), right
+        # after S_dom: for a category, = sum over its sectors (S_dom weighted by x_dom)
+        f_x_dom = table.loc["S_dom"] * table.loc["x_dom"]
+        position = table.index.get_loc("S_dom") + 1
+        table = pd.concat([table.iloc[:position], f_x_dom.rename("F_x_dom").to_frame().T, table.iloc[position:]])
         table.loc["M_imp*Y_dom"] = table.loc["M_imp"] * table.loc["Y_dom"]
         table.loc["M_dom*Y_dom"] = table.loc["M_dom"] * table.loc["Y_dom"]
         table.loc["M_imp*Y_dom+M_dom*Y_dom"] = table.loc["M_imp*Y_dom"] + table.loc["M_dom*Y_dom"]
@@ -283,15 +389,16 @@ def build_indicator_tables(scenario_folder_path, cf_df, bridge_m):
 
 def _write_sortable_sheet(ws, indicator_name, table, n_sectors, sort_row):
     """Write a sheet whose columns are sorted by Excel formulas, in decreasing
-    order of the row named in B1 (drop-down list, editable by hand): the
-    sectors among themselves, then the categories among themselves. Layout:
+    order of the row named in B1 (drop-down list, editable by hand). The
+    consumption categories and the sectors are in two separate blocks of rows
+    (same row labels M_imp, M_dom..., columns starting at B in both), the
+    categories on top. Layout:
       - row 1        : choice of the sort row (B1);
-      - top block    : sorted table (formulas) -- sorted sectors, then sorted
-                       categories, + a last row giving the share (%) of the
-                       sort indicator within its group;
-      - bottom block : source data (values, bridge order), followed by the
-                       "Sort key", "Rank" (sectors) and "Rank (categories)"
-                       computation rows.
+      - sorted tables (formulas): categories, then sectors, each followed by a
+        row giving the share (%) of the sort indicator within its block;
+      - source data (values, bridge order): categories block (followed by the
+        "Sort key (categories)" and "Rank (categories)" rows), then sectors
+        block (header "Sectors", followed by "Sort key" and "Rank").
     Rank = RANK + COUNTIF to break ties (sectors at 0 in particular), so that
     each position 1..n matches exactly one column.
     """
@@ -300,71 +407,75 @@ def _write_sortable_sheet(ws, indicator_name, table, n_sectors, sort_row):
     from openpyxl.worksheet.datavalidation import DataValidation
 
     bold = Font(bold=True)
+    red = Font(bold=True, color="C00000")
     labels = list(table.index)
-    n_rows, n_cols = len(labels), table.shape[1]
+    n_rows = len(labels)
+    categories = table.iloc[:, n_sectors:]
+    sectors = table.iloc[:, :n_sectors]
 
-    sorted_header = 3
-    sorted_first = sorted_header + 1
-    share_row = sorted_first + n_rows
-    src_title = sorted_first + n_rows + 2
-    src_header = src_title + 1
-    src_first = src_header + 1
-    src_last = src_first + n_rows - 1
-    key_row = src_last + 1
-    rank_row = key_row + 1
-    category_rank_row = rank_row + 1
-    label_range = f"$A${src_first}:$A${src_last}"
+    # Row positions: sorted blocks, then source blocks (each block = header +
+    # n_rows data rows + 1 extra row (share / sort key) [+ rank row]).
+    sorted_cat_header = 3
+    sorted_sec_header = sorted_cat_header + n_rows + 3
+    src_title = sorted_sec_header + n_rows + 3
+    src_cat_header = src_title + 1
+    src_sec_header = src_cat_header + n_rows + 4
 
-    ws["A1"] = "Sort sectors and categories by (decreasing order):"
+    ws["A1"] = "Sort categories and sectors by (decreasing order):"
     ws["A1"].font = bold
     ws["B1"] = sort_row
-    ws["B1"].font = Font(bold=True, color="C00000")
+    ws["B1"].font = red
+    label_range = f"$A${src_cat_header + 1}:$A${src_cat_header + n_rows}"
     validation = DataValidation(type="list", formula1=f"={label_range}", allow_blank=False)
     ws.add_data_validation(validation)
     validation.add("B1")
-
-    # Source data (raw values, bridge order)
     ws.cell(src_title, 1, SOURCE_BLOCK_TITLE).font = bold
-    ws.cell(src_header, 1, indicator_name).font = bold
-    for j, name in enumerate(table.columns, start=2):
-        ws.cell(src_header, j, str(name)).font = bold
-    for i, label in enumerate(labels):
-        ws.cell(src_first + i, 1, label).font = bold
-        for j, value in enumerate(table.iloc[i].values, start=2):
-            value = float(value)
-            ws.cell(src_first + i, j, value if np.isfinite(value) else 0.0)
 
-    # Sort key: value of the row chosen in B1, for each column
-    ws.cell(key_row, 1, KEY_ROW_LABEL).font = bold
-    for j in range(2, 2 + n_cols):
-        c = get_column_letter(j)
-        ws.cell(key_row, j, f"=INDEX({c}${src_first}:{c}${src_last},MATCH($B$1,{label_range},0))")
-
-    ws.cell(sorted_header, 1, indicator_name).font = bold
-    for i, label in enumerate(labels):
-        ws.cell(sorted_first + i, 1, label).font = bold
-    ws.cell(share_row, 1, '="Share of "&$B$1&" (%)"').font = Font(bold=True, color="C00000")
-
-    # Sorting of each group (sectors, then categories) independently: rank in
-    # the group, columns of the sorted table reordered, share (%) in the total
-    # of the group.
-    groups = [
-        (2, n_sectors, rank_row, RANK_ROW_LABEL),
-        (2 + n_sectors, n_cols - n_sectors, category_rank_row, CATEGORY_RANK_ROW_LABEL),
+    blocks = [
+        (categories, src_cat_header, indicator_name, sorted_cat_header,
+         f"{indicator_name} - consumption categories", CATEGORY_KEY_ROW_LABEL, CATEGORY_RANK_ROW_LABEL),
+        (sectors, src_sec_header, SECTOR_SOURCE_HEADER, sorted_sec_header,
+         f"{indicator_name} - sectors", KEY_ROW_LABEL, RANK_ROW_LABEL),
     ]
-    for start, size, group_rank_row, rank_label in groups:
+    for block, src_header, src_label, sorted_header, sorted_label, key_label, rank_label in blocks:
+        size = block.shape[1]
+        src_first, src_last = src_header + 1, src_header + n_rows
+        key_row, rank_row = src_last + 1, src_last + 2
+        sorted_first = sorted_header + 1
+        share_row = sorted_first + n_rows
+        block_labels = f"$A${src_first}:$A${src_last}"
+
+        # Source data (raw values, bridge order)
+        ws.cell(src_header, 1, src_label).font = bold
+        for j, name in enumerate(block.columns, start=2):
+            ws.cell(src_header, j, str(name)).font = bold
+        for i, label in enumerate(labels):
+            ws.cell(src_first + i, 1, label).font = bold
+            for j, value in enumerate(block.iloc[i].values, start=2):
+                value = float(value)
+                ws.cell(src_first + i, j, value if np.isfinite(value) else 0.0)
+        ws.cell(key_row, 1, key_label).font = bold
+        ws.cell(rank_row, 1, rank_label).font = bold
+
+        # Sorted table headers
+        ws.cell(sorted_header, 1, sorted_label).font = bold
+        for i, label in enumerate(labels):
+            ws.cell(sorted_first + i, 1, label).font = bold
+        ws.cell(share_row, 1, '="Share of "&$B$1&" (%)"').font = red
         if size == 0:
             continue
-        first, last = get_column_letter(start), get_column_letter(start + size - 1)
+
+        first, last = get_column_letter(2), get_column_letter(1 + size)
         keys = f"${first}${key_row}:${last}${key_row}"
-        ranks = f"${first}${group_rank_row}:${last}${group_rank_row}"
-        ws.cell(group_rank_row, 1, rank_label).font = bold
-        for j in range(start, start + size):
+        ranks = f"${first}${rank_row}:${last}${rank_row}"
+        for j in range(2, 2 + size):
             c = get_column_letter(j)
-            ws.cell(group_rank_row, j, f"=RANK({c}{key_row},{keys},0)"
-                                       f"+COUNTIF(${first}${key_row}:{c}{key_row},{c}{key_row})-1")
+            # Sort key: value of the row chosen in B1; rank within the block
+            ws.cell(key_row, j, f"=INDEX({c}${src_first}:{c}${src_last},MATCH($B$1,{block_labels},0))")
+            ws.cell(rank_row, j, f"=RANK({c}{key_row},{keys},0)"
+                                 f"+COUNTIF(${first}${key_row}:{c}{key_row},{c}{key_row})-1")
         for k in range(size):
-            j = start + k
+            j = 2 + k
             pos = f"MATCH({k + 1},{ranks},0)"
             ws.cell(sorted_header, j, f"=INDEX(${first}${src_header}:${last}${src_header},{pos})").font = bold
             for i in range(n_rows):
@@ -374,7 +485,7 @@ def _write_sortable_sheet(ws, indicator_name, table, n_sectors, sort_row):
             cell.number_format = "0.00"
 
     ws.column_dimensions["A"].width = 46
-    ws.freeze_panes = ws.cell(sorted_first, 2)
+    ws.freeze_panes = "B2"
 
 
 def export_indicator_tables_excel(scenario_folder_path, cf_df, bridge_m, output_path,
@@ -418,6 +529,19 @@ def _index_of_any(values, labels, start=0):
     raise ValueError(f"None of {labels} found")
 
 
+def _read_source_block(rows, header_idx, end_idx):
+    """(row labels, DataFrame) of a source block: header row at `header_idx`
+    (column names from B), data rows until `end_idx` (excluded)."""
+    header = rows[header_idx]
+    n_cols = max((j for j, v in enumerate(header) if v is not None and j > 0), default=0)
+    columns = [str(v) for v in header[1:n_cols + 1]]
+    data_rows = rows[header_idx + 1:end_idx]
+    values = np.array([[float(v) if v is not None else 0.0 for v in (list(r[1:n_cols + 1]) + [None] * n_cols)[:n_cols]]
+                       for r in data_rows]).reshape(len(data_rows), n_cols)
+    labels = [r[0] for r in data_rows]
+    return labels, pd.DataFrame(values, index=labels, columns=columns)
+
+
 def load_indicator_tables_excel(excel_path):
     """Read back a workbook written by export_indicator_tables_excel.
 
@@ -451,31 +575,44 @@ def load_indicator_tables_excel(excel_path):
         if not any(title in first_col for title in source_titles):
             continue
         header_idx = _index_of_any(first_col, source_titles) + 1
-        key_idx = _index_of_any(first_col, key_labels, header_idx)
-        rank_idx = _index_of_any(first_col, rank_labels, key_idx)
-
-        header = rows[header_idx]
-        indicator_name = header[0]
-        n_cols = max(j for j, v in enumerate(header) if v is not None)
-        columns = [str(v) for v in header[1:n_cols + 1]]
-        # The sectors are the ranked columns ("Rank" row filled in), the
-        # categories those that follow.
-        n_sectors = sum(v is not None for v in rows[rank_idx][1:n_cols + 1])
-
-        data_rows = rows[header_idx + 1:key_idx]
-        values = np.array([[float(v) if v is not None else 0.0 for v in r[1:n_cols + 1]] for r in data_rows])
-        labels = [r[0] for r in data_rows]
+        indicator_name = rows[header_idx][0]
         sort_row = rows[0][1]
+
+        if CATEGORY_KEY_ROW_LABEL in first_col:
+            # Current layout: categories block, then sectors block
+            cat_key_idx = _index_of_any(first_col, (CATEGORY_KEY_ROW_LABEL,), header_idx)
+            sec_header_idx = _index_of_any(first_col, (SECTOR_SOURCE_HEADER,), cat_key_idx)
+            sec_key_idx = _index_of_any(first_col, key_labels, sec_header_idx)
+            labels, category_table = _read_source_block(rows, header_idx, cat_key_idx)
+            _, sector_table = _read_source_block(rows, sec_header_idx, sec_key_idx)
+            up_to_date = True
+        else:
+            # Earlier layout: sectors then categories on the same rows
+            key_idx = _index_of_any(first_col, key_labels, header_idx)
+            rank_idx = _index_of_any(first_col, rank_labels, key_idx)
+            labels, table = _read_source_block(rows, header_idx, key_idx)
+            # The sectors are the ranked columns ("Rank" row filled in), the
+            # categories those that follow.
+            n_sectors = sum(v is not None for v in rows[rank_idx][1:table.shape[1] + 1])
+            sector_table, category_table = table.iloc[:, :n_sectors], table.iloc[:, n_sectors:]
+            up_to_date = False
+
+        # Total footprint row renamed d_cba (former label in older workbooks)
+        rename = {TOTAL_FOOTPRINT_ROW_LEGACY: TOTAL_FOOTPRINT_ROW}
+        labels = [rename.get(label, label) for label in labels]
+        sector_table, category_table = sector_table.rename(index=rename), category_table.rename(index=rename)
+        sort_row = rename.get(sort_row, sort_row)
+
         if sort_row not in labels:
             raise ValueError(f"[{ws.title}] unknown sort row in B1: {sort_row!r} (expected: {labels})")
         sheets[indicator_name] = {
-            "sector_table": pd.DataFrame(values[:, :n_sectors], index=labels, columns=columns[:n_sectors]),
-            "category_table": pd.DataFrame(values[:, n_sectors:], index=labels, columns=columns[n_sectors:]),
+            "sector_table": sector_table,
+            "category_table": category_table,
             "sort_row": sort_row,
-            "sectors": columns[:n_sectors],
-            "categories": columns[n_sectors:],
-            # False for a workbook written before the categories were sorted by formulas
-            "categories_sorted": any(label in first_col for label in category_rank_labels),
+            "sectors": list(sector_table.columns),
+            "categories": list(category_table.columns),
+            # False for a workbook in an earlier layout (to be regenerated)
+            "categories_sorted": up_to_date,
         }
     wb.close()
     return sheets
@@ -484,25 +621,29 @@ def load_indicator_tables_excel(excel_path):
 BUBBLE_ROWS = ["M_imp", "M_dom", "M_row", "Y_imp", "Y_dom"]
 
 
-def select_bubble_items(sheet, type="categories", n=10):
+def select_bubble_items(sheet, type="categories", n=None, sort_row=None):
     """Columns to plot for a sheet read back by load_indicator_tables_excel.
 
-    type="categories": all the consumption categories;
+    type="categories": the first n consumption categories;
     type="products"  : the first n sectors.
-    In both cases, columns in decreasing order of the sort row of the sheet
-    (B1), ties in bridge order (same rule as the RANK + COUNTIF of the workbook).
+    n=None: all of them. In both cases, columns in decreasing order of
+    `sort_row` (None: the sort row of the sheet, B1), ties in bridge order
+    (same rule as the RANK + COUNTIF of the workbook).
 
     Returns:
         DataFrame rows BUBBLE_ROWS x selected columns.
     """
     if type == "categories":
-        table, limit = sheet["category_table"], None
+        table = sheet["category_table"]
     elif type == "products":
-        table, limit = sheet["sector_table"], n
+        table = sheet["sector_table"]
     else:
         raise ValueError(f"type must be 'categories' or 'products', got {type!r}")
-    order = np.argsort(-table.loc[sheet["sort_row"]].to_numpy(dtype=float), kind="stable")
-    return table.iloc[:, order[:limit]].loc[BUBBLE_ROWS]
+    sort_row = sheet["sort_row"] if sort_row is None else sort_row
+    if sort_row not in table.index:
+        raise ValueError(f"Unknown sort_row: {sort_row!r} (expected: {list(table.index)})")
+    order = np.argsort(-table.loc[sort_row].to_numpy(dtype=float), kind="stable")
+    return table.iloc[:, order[:n]].loc[BUBBLE_ROWS]
 
 
 def scale_bubble_sizes(values, scale=BUBBLE_SCALE, min_size=BUBBLE_MIN_SIZE, ref_max=None):
@@ -614,20 +755,31 @@ def _style_x_axis(ax, x_pos, items, type):
     ax.set_xlim(-0.6, len(items) - 0.4)
 
 
-def _subplot_title(indicator_name, sheet):
-    return f"{indicator_name}\n(sorted by: {sheet['sort_row']})"
+def _figure_subject(type, n, sort_row):
+    items = "consumption categories" if type == "categories" else "sectors"
+    subject = f"{items} per indicator" if n is None else f"top {n} {items} per indicator"
+    return f"{subject} (sorted by: {sort_row})"
 
 
-def _figure_subject(type, n):
-    return "consumption categories" if type == "categories" else f"top {n} sectors per indicator"
+def _common_sort_row(sheets, sort_row=None):
+    """Sort row applied to all the indicators: `sort_row` if given, otherwise
+    the B1 cell of the sheets, which must then be the same in all of them."""
+    if sort_row is not None:
+        return sort_row
+    chosen = {name: sheet["sort_row"] for name, sheet in sheets.items()}
+    if len(set(chosen.values())) > 1:
+        details = "\n".join(f"  {name}: {row}" for name, row in chosen.items())
+        raise ValueError("The sort row (B1) differs between the sheets of the workbook; the same one must "
+                         "apply to all the indicators. Set the same B1 everywhere or pass sort_row=...\n"
+                         + details)
+    return next(iter(chosen.values()), TOTAL_FOOTPRINT_ROW)
 
 
-def _bubble_rows(label, payloads, shares, sheets, type):
+def _bubble_rows(label, payloads, shares, sort_row, type):
     """Rows of the "Bubbles" sheet of create_driver_comparison for one
     scenario: one row per indicator x displayed item, in display order."""
     rows = []
     for indicator_name, payload in payloads.items():
-        sort_row = sheets[indicator_name]["sort_row"] if indicator_name in sheets else None
         for rank, item in enumerate(payload.columns, start=1):
             column = payload[item]
             rows.append({
@@ -644,20 +796,24 @@ def _bubble_rows(label, payloads, shares, sheets, type):
     return rows
 
 
-def create_driver_comparison(base_excel_path, type="categories", n=10, scenarios=False,
+def create_driver_comparison(base_excel_path, type="categories", n=None, scenarios=False,
                              comparison_excel_path=None, base_label=None, s1_label=None,
-                             excel_path=None):
+                             excel_path=None, sort_row=None):
     """Bubble chart from the Excel workbooks of export_indicator_tables_excel:
     1 subplot per indicator, 2 bubbles per item of the X axis (see
     BUBBLE_SERIES): M_dom+M_imp (size Y_dom) and M_row (size Y_imp).
 
     Args:
         base_excel_path: workbook of the reference scenario (baseline).
-        type: "categories" -> all the consumption categories;
-            "products" -> the first `n` sectors of each indicator.
-            In both cases, in decreasing order of the sort row chosen in B1 of
-            its sheet (editable by hand in Excel, see select_bubble_items).
-        n: number of sectors displayed if type="products" (ignored otherwise).
+        type: "categories" -> the first `n` consumption categories of each
+            indicator; "products" -> the first `n` sectors of each indicator.
+            In both cases, in decreasing order of the sort row (see sort_row),
+            the same for all the indicators, recalled in the figure title.
+        n: number of categories / sectors displayed (None: all).
+        sort_row: row of the tables used to sort the items of every indicator
+            (e.g. "d_cba", "M_row", "Y_dom"...). None: the row chosen in B1 of
+            the baseline workbook (editable by hand in Excel), which must then
+            be the same in all its sheets (ValueError otherwise).
         scenarios: False -> baseline alone; True -> comparison baseline vs
             `comparison_excel_path` (independent vertical axis per scenario).
             The displayed columns and their order are those of the baseline
@@ -675,13 +831,14 @@ def create_driver_comparison(base_excel_path, type="categories", n=10, scenarios
     """
     base_sheets = load_indicator_tables_excel(base_excel_path)
     base_label = base_label or _scenario_label(base_excel_path)
-    base_payloads = {sp: select_bubble_items(sheet, type, n) for sp, sheet in base_sheets.items()}
+    sort_row = _common_sort_row(base_sheets, sort_row)
+    base_payloads = {sp: select_bubble_items(sheet, type, n, sort_row) for sp, sheet in base_sheets.items()}
     base_shares = {sp: _shares(base_sheets[sp], list(p.columns), type) for sp, p in base_payloads.items()}
-    titles = {sp: _subplot_title(sp, sheet) for sp, sheet in base_sheets.items()}
-    bubble_rows = _bubble_rows(base_label, base_payloads, base_shares, base_sheets, type)
+    titles = {sp: sp for sp in base_sheets}
+    bubble_rows = _bubble_rows(base_label, base_payloads, base_shares, sort_row, type)
 
     if not scenarios:
-        fig, axes = _plot_single(base_payloads, base_shares, titles, type, n, base_label)
+        fig, axes = _plot_single(base_payloads, base_shares, titles, type, n, sort_row, base_label)
         subject = base_label
     else:
         if comparison_excel_path is None:
@@ -699,27 +856,27 @@ def create_driver_comparison(base_excel_path, type="categories", n=10, scenarios
                 s1_payloads[sp] = pd.DataFrame(0.0, index=BUBBLE_ROWS, columns=items)
                 s1_shares[sp] = np.zeros(len(items))
         fig, axes = _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles, type, n,
-                                     base_label, s1_label)
-        bubble_rows += _bubble_rows(s1_label, s1_payloads, s1_shares, s1_sheets, type)
+                                     sort_row, base_label, s1_label)
+        bubble_rows += _bubble_rows(s1_label, s1_payloads, s1_shares, sort_row, type)
         subject = f"{base_label} vs {s1_label}"
 
     if excel_path is not None and fig is not None:
         figure_export.write_figure_excel(excel_path, {"Bubbles": bubble_rows}, about={
-            "Figure": f"Bubble chart - {subject} - {_figure_subject(type, n)}",
+            "Figure": f"Bubble chart - {subject} - {_figure_subject(type, n, sort_row)}",
             "Generated by": "planefr_lib.plot_bubble.create_driver_comparison",
             "Content": "Environmental intensities (multipliers M) and final demands (Y) of the displayed "
                        "consumption categories or sectors, by indicator. Bubble heights: M_dom+M_imp "
                        "(French products, size Y_dom) and M_row (imported products, size Y_imp).",
             "Source workbooks": ", ".join(Path(p).name for p in
                                           [base_excel_path] + ([comparison_excel_path] if scenarios else [])),
-            "Order": "Items in decreasing order of the 'Sorted by' row of the source workbook "
+            "Order": f"Items in decreasing order of the {sort_row} row, the same for all the indicators "
                      "(the order of the reference scenario in comparison mode).",
             "Share": "Share of the item in the total footprint of the indicator (sum over all the sectors).",
         })
     return fig, axes
 
 
-def _plot_single(payloads, shares, titles, type, n, label):
+def _plot_single(payloads, shares, titles, type, n, sort_row, label):
     """1 subplot per indicator, 1 scenario: share (%) bars in the total on
     the left axis, bubbles on the right axis. Bubble scale common to all the
     subplots (max of Y_dom, resp. Y_imp, over the displayed items)."""
@@ -763,14 +920,14 @@ def _plot_single(payloads, shares, titles, type, n, label):
     ] + [Patch(facecolor=SHARE_BAR_COLOR, alpha=0.5, label=f"{SHARE_AXIS_LABEL} (left axis)")]
     fig.legend(handles=legend_handles, loc="lower center", ncol=len(legend_handles), fontsize=10,
                bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle(f"Bubble chart - {label} - {_figure_subject(type, n)}",
+    fig.suptitle(f"Bubble chart - {label} - {_figure_subject(type, n, sort_row)}",
                  fontsize=15, fontweight="bold", y=0.995)
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     return fig, axes
 
 
 def _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles, type, n,
-                     base_label, s1_label):
+                     sort_row, base_label, s1_label):
     """Comparison of two scenarios: share (%) bars in the total of each scenario
     on the left axis; bubbles on two independent right axes (base_label against
     the frame, s1_label shifted outwards), shifted horizontally. Bubble scale
@@ -852,7 +1009,7 @@ def _plot_comparison(base_payloads, s1_payloads, base_shares, s1_shares, titles,
     ]
     fig.legend(handles=legend_handles, loc="lower center", ncol=3, fontsize=9,
                bbox_to_anchor=(0.5, -0.01), frameon=True, fancybox=True, shadow=True)
-    fig.suptitle(f"Bubble chart - {base_label} vs {s1_label} - {_figure_subject(type, n)}",
+    fig.suptitle(f"Bubble chart - {base_label} vs {s1_label} - {_figure_subject(type, n, sort_row)}",
                  fontsize=15, fontweight="bold", y=0.995)
     plt.tight_layout(rect=[0, 0.04, 1, 0.96])
     return fig, axes

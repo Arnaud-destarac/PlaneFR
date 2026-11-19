@@ -2,7 +2,7 @@
 
 This document describes the PlaneFR module, which assesses the environmental pressures of France against the planetary boundaries using the MatMat input-output model. 
 
-It describes the state of the code on 18 November 2026.
+It describes the state of the code on 19 November 2026.
 
 ## Contents
 
@@ -530,9 +530,10 @@ The three extensions coming from the France calibration do not have the same for
 |---|---|
 | `dom_ghg_emissions` | Removes the `ghg_combustion` part, handled separately, then renames the `gas` index level to `indicator`. |
 | `imp_ghg_emissions` | Sums the sources by gas. |
-| `dom_ghg_combustion` | Collapses to a single "CO2" row. Creates `imp_ghg_combustion` filled with zeros, combustion emissions being counted as domestic. |
+| `dom_ghg_combustion` | Collapses `d_cba`, `d_cba_k`, `M`, `M_k` to a single "CO2" row. Creates `imp_ghg_combustion` filled with zeros, combustion emissions being counted as domestic (`d_cba` covers all the fuels burned in France, domestic or imported, including by households). |
 | `*_raw_materials` | Keeps one row per material and adds an "RMC" row, the sum of all materials. |
-| `F_x_dom` of `ghg_combustion` and `raw_materials` | Missing upstream: recomputed as the sum of the domestic parts of `F_Y` and `F_Z`. |
+| `F_x_dom` of `raw_materials` | Missing upstream: recomputed as the sum of the domestic rows of `F_Y` and `F_Z` (extraction on the French territory), in the same format as the other `F_x_dom`: one row per material, non-zero only in the column of the extracting sector of the same name, plus an "RMC" row (sum), × 200 sectors. |
+| `F_x_dom` and `F_Y_tot` of `ghg_combustion` | Missing upstream: territorial emissions, whatever the origin of the fuel. `F_x_dom` = column sums of `F_Z` over all rows (one "CO2" row by sector that burns the fuel); `F_Y_tot` = sum of `F_Y` (combustion by households), not written in the agri-food folders. `d_cba` already includes `F_Y` (computed with `S_Y`), so PlaneFR adds this `F_Y_tot` to the PBA only. |
 | `M`, `M_k`, `M_RoW`, `S_x_dom`, `S_Y`, `S_Z` | Rows reformatted like those of `d_cba` or `F_x_dom`. |
 
 #### Steps 7 and 8
@@ -669,7 +670,7 @@ ds_row     = s_2050 / s_base - 1
 
 The shock is applied uniformly to all the sectors exerting the pressure. An empty or zero shock leaves `dS = 0`: it means "not calibrated", not "constant pressure". In that case the intensity is unchanged and the pressure follows production.
 
-The base-year data and the 2050 production are read in `Module_PlaneFR/data/Input_Shocks_MatMat/S_extraction.xlsx`, written by `export_dS.py` from the engine outputs: an `x` sheet with one row per scenario, and one `Fx_<ext>` and one `FY_<ext>` sheet per extension.
+The base-year data and the 2050 production are read in `Module_PlaneFR/data/Input_Shocks_MatMat/S_extraction.xlsx`, written by `export_dS.py` from the engine outputs: an `x` sheet with one row per scenario, one `Fx_<ext>` sheet per extension (indicators × 200 sectors, including `ghg_combustion` and `raw_materials` since their `F_x_dom` is recomputed by sector) and one `FY_<ext>` sheet per extension that has an `F_Y_tot`.
 
 **Direct pressures of final demand.** They have no sectoral dimension and do not go through the engine. The script writes the base-year value multiplied by `(1 + shock)` directly into the scenario's `F_Y_tot.pkl`. Starting from the base-year value, not from the value already in the file, makes the operation idempotent.
 
@@ -811,6 +812,8 @@ A France scenario has its extensions split into `dom_<ext>` and `imp_<ext>`:
     └── imp_land/                     M_RoW, d_imp, M, M_k, d_cba, d_cba_k
 ```
 
+The extensions of the France calibration in product format, `dom_ghg_combustion` and `dom_raw_materials`, have no `S_x_dom`: they hold `F_Z`, `F_Y` (rows = products burned or extracted, columns = using sectors or final demand), `S_Z`, `S_Y`, and the `F_x_dom` recomputed by `reformat_d_cba_k.py` in the same format as the other extensions (indicators × 200 sectors, § 5.3). `dom_ghg_combustion` also has an `F_Y_tot` (combustion by households), except in the agri-food folders.
+
 A World, Europe or region folder has a single folder per extension, with three already aggregated files: `d_cba.pkl`, `F_x_dom.pkl` and `F_Y_tot.pkl`.
 
 `planefr_lib` tells the two cases apart by the folder structure, not by its name (`processing.scenario_has_dom_imp_split`).
@@ -892,14 +895,14 @@ The NH3 and N2O factors correspond to the nitrogen mass fraction of each molecul
 2. **Characterization.** Filtering the rows of the indicator and weighting them by their factor (`filter_and_weight_vector`).
 3. **Breakdown.** Projection of the 1,000 columns on five consumption categories with the `Final conso. cat.` sheet of `bridge_matrices.xlsx`: Food, Housing, Mobility, Final goods, Final services. The export columns have zero weight: the footprint is that of households and general government.
 4. **Conversion.** Division by the "Unit conversion Exiobase" row of `boundaries_values.xlsx`, to go from the EXIOBASE unit to the figure unit.
-5. **Final demand.** Addition of `F_Y_tot`, if it exists, in a separate category called `F_Y` ("Not allocated" in the legends), counted as domestic.
+5. **Final demand.** Addition of `F_Y_tot`, if it exists, in a separate category called `F_Y` ("Not allocated" in the legends), counted as domestic. Not for `ghg_combustion`, whose `d_cba` already includes the combustion by households (`io.f_y_in_d_cba_france`).
 6. **Aggregation.** Sum over the extensions of the indicator.
 
 The result is a payload with the keys `"domestic"` and `"imported"` (constants `processing.DOMESTIC` and `processing.IMPORTED`), each a series by consumption category, plus `"pba"` and `"categories"`.
 
 #### Territorial pressures
 
-The PBA value of an indicator is the characterized sum of `F_x_dom` and `F_Y_tot`, converted in the same way. It is a single total, with no breakdown by category.
+The PBA value of an indicator is the characterized sum of `F_x_dom` and `F_Y_tot`, converted in the same way. It is a single total, with no breakdown by category. For an extension whose `d_cba` already includes the direct emissions of final demand (`dom_<lp>/S_Y.pkl` present, i.e. `ghg_combustion`), `F_Y_tot` is added to the PBA only, not to the CBA.
 
 #### Variants
 
@@ -1009,8 +1012,8 @@ Every figure function takes an `excel_path` argument. When it is given, the func
 | | `create_footprint_decomposition` | `synthesis_by_lp_all_scenarios.png` / `.xlsx` | `Footprint`, `Indicators` (CBA, PBA, variations), `Boundaries` (bounds and DLS) |
 | `radial_synthesis.ipynb` | `create_radial_synthesis` | `<group>/radial_synthesis_cba_all_scenarios.png` / `.xlsx`, `<group>/..._pba_...` | `Values` (value, ratio to the Safe Boundary, variation; by household category with `Bdf`), `Boundaries`, `Footprint` (CBA) |
 | `multi-regions_synthesis.ipynb` | `create_multi_regions_synthesis` | `<group>/overshoot_safe_operating_space_by_region.png` / `.xlsx` (group set by `SCENARIO_GROUP`, e.g. `2019`; with `"2019_raw"`, the regions of `REGIONS`) | `Overshoot` (footprint, budgets of the region, overshoot, sensitivity bounds) |
-| `driver_comparison.ipynb` | `export_indicator_tables_excel` | `bubble_data_by_indicator_<scenario>.xlsx` (source workbooks) | one sheet per indicator |
-| | `create_driver_comparison` | `bubble_chart_*.png` / `.xlsx` | `Bubbles` (M and Y of each displayed item, share) |
+| `driver_comparison.ipynb` | `export_indicator_tables_excel` | `bubble_data_by_indicator_<scenario>.xlsx` (source workbooks) | one sheet per indicator: categories block, then sectors block (`x_dom`, `S_dom`, `F_x_dom`, `M`, `Y`, `M*Y`) |
+| | `create_driver_comparison` | `bubble_chart_<scope>_<type>.png` / `.xlsx`, `<type>` = `top<N>_categories`, `top<N>_products`, or `categories` / `products` with `N = None` | `Bubbles` (M and Y of each displayed item, share) |
 | `biodiversity_process_contribution.py` | `create_biodiversity_process_contribution` | `biodiversity_loss_process_contribution.png` / `.xlsx` | `Contribution` (by process group), `LP detail` |
 
 `Untitled-1.ipynb` is a draft.
@@ -1021,7 +1024,34 @@ Every figure function takes an `excel_path` argument. When it is given, the func
 
 **Overshoot of the safe operating space, by region.** One row per indicator, one bubble per scenario, positioned in multiples of the budget. `create_multi_regions_synthesis` works in absolute values and gives each country or region its own budget share, deduced from the region code in the folder name (`processing.resolve_region_code`). A name without a region code is treated as France. With `sensitivity=True`, a segment spans the overshoot levels obtained with the min and max shares; for the World (share 1), it is obtained per capita over the population periods 2019, 2019-2050 and 2019-2100 (`config.WORLD_SENSITIVITY_POPULATION_PERIODS`, `processing.compute_world_period_budget`), which requires `pop_df`. The notebook currently calls it with `sharing_principle="CTR"`. Its group is `REGIONS` (France, EU27, World, RoW Africa in 2019), or `REGIONS_agri` (`AGRI = True` in `All.ipynb`, which switches both displayed groups to their `_agri` variant) for the same geographies restricted to the agri-food system (§ 5.4); like any group ending in `_agri`, the latter reads the `Agri` sheets of `indicator_computing.xlsx` and `boundaries_values.xlsx`.
 
-**Intensities by product.** The notebook works in two steps. It first exports one workbook per scenario, with one sheet per indicator: multipliers `M_dom`, `M_imp`, `M_row` and final demands `Y_dom`, `Y_imp` by product and by category. It then plots the bubbles by reading these workbooks back. The display order is set by the sort row chosen in cell B1 of each sheet, editable in Excel. The multipliers of a category are an average weighted by final demand. The grouping sheet is `M` (5 categories) or `M_split` (9 categories: Vegetal products, Animal products, Sugar, Beverages & Tobacco, Housing, Mobility, Textiles, Final goods nec, Hotel & restaurant, Final services).
+**Intensities by product.** The notebook works in two steps. It first exports one workbook per scenario (`export_indicator_tables_excel`), with one sheet per indicator. It then plots the bubbles by reading these workbooks back (`create_driver_comparison`).
+
+Each sheet has the same rows for the consumption categories and for the products (sectors), in two separate blocks, categories on top, both with their columns starting at B:
+
+| Row | Content | Aggregation by category |
+|---|---|---|
+| `x_dom` | Domestic production (first 200 rows of `system/x.pkl`) | Sum |
+| `S_dom` | Direct intensity of the domestic sectors | Mean weighted by `x_dom` |
+| `F_x_dom` | Direct pressure of the domestic production, characterized: `S_dom × x_dom` | Sum |
+| `M_imp`, `M_dom`, `M_row` | Multipliers (`M_k` of `imp_`/`dom_`, `M_RoW`) | Mean weighted by `Y_dom` (`Y_imp` for `M_row`) |
+| `Y_imp`, `Y_dom` | Final demand without GFCF or exports | Sum |
+| `M*Y` rows | Products and their sums, the last one being the total footprint | Exact sum over the sectors |
+
+`S_dom` is read in `dom_<lp>/S_x_dom.pkl`, or computed as `F_x_dom / x_dom` when an extension has no `S_x_dom.pkl` (`ghg_combustion`, `raw_materials`, whose `F_x_dom` is by sector since § 5.3), and characterized like `M`. For a category, `F_x_dom = S_dom × x_dom` is therefore the sum of the direct pressures of its sectors.
+
+In `M_split`, each product belongs to a single category, so the category columns add up to the sector columns. The 31 energy products (electricity, fuels, gas, heat) are assigned to the category whose column of `Y` dominates their French final demand (2015, without GFCF or exports):
+
+| Category | Products | Basis |
+|---|---|---|
+| Housing | Anthracite, Other Bituminous Coal, Patent Fuel, natural gas, Kerosene (lamp/heating kerosene), LPG, the 12 electricity products, transmission and distribution of electricity, distribution of gaseous fuels, steam and hot water | 100 % `Households Residential` (steam: 85 %); electricity products without final demand follow the others |
+| Mobility | Motor Gasoline, Aviation Gasoline, Kerosene Type Jet Fuel, Gas/Diesel Oil, Heavy Fuel Oil, Biogasoline, Biodiesels | 100 % `Households Transport` (Gas/Diesel Oil: 70 %, the 30 % of heating oil follow) |
+| Final goods nec | Coke Oven Coke, Refinery Feedstocks | Intermediate products, no significant final demand |
+
+The `M` sheet still assigns these 31 products to two or three categories (Housing, Mobility, Final goods), each counting them in full: with `BRIDGE_SHEET = "M"`, the sum over the category columns exceeds the sum over the sectors, and totals must be taken on the sectors. The two sectors of `plot_bubble.EXCLUDED_SECTORS` (outlier `M_row` intensities) are removed from the sector columns and from the category aggregates.
+
+The top of the sheet holds the two sorted tables (formulas), each followed by the share (%) of the sort row within its block. The bottom holds the source data (values, bridge order), with the `Sort key` and `Rank` computation rows of each block. The sort row is chosen in cell B1 (drop-down list, editable in Excel) and applies to both blocks; when read back, only the source blocks are used, so the workbook can be read whether or not Excel has recomputed it. A workbook in the earlier layout (categories after the sectors on the same rows) is still read, but flagged as out of date: the notebooks then regenerate it, even with `OVERWRITE_EXCEL = False`.
+
+The chart shows, for each indicator, the first `N` consumption categories (`type="categories"`) or the first `N` sectors (`type="products"`) in the order of the sort row; `N = None` shows them all (parameter `n` of `create_driver_comparison`). The grouping sheet of `bridge_matrices.xlsx` is `M` (5 categories: Food, Housing, Mobility, Final goods, Final services) or `M_split` (14 categories: Cereals; Vegetables, fruits, nuts; Oil and fats; Agri-food nec; Meat cattle; Dairy Products; Animal products nec; Sugar, Beverages & Tobacco; Housing; Mobility; Textiles; Final goods nec; Hotel & restaurant; Final services).
 
 ---
 
