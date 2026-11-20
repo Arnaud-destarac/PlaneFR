@@ -18,3 +18,6 @@ jupyter_client==8.8.0
 jupyter_core==5.9.1
 nbformat==5.10.4
 nbconvert==7.17.1
+
+# Tests (tests/: py -m pytest tests)
+pytest==9.2.0

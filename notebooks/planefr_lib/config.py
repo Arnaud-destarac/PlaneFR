@@ -56,6 +56,10 @@ FIGURES_DIR = Path(os.environ.get("PLANEFR_FIGURES_DIR", str(PROJECT_DIR / "figu
 
 CHARACTERIZATION_FACTORS_FILE = POST_PROCESSING_DIR / "indicator_computing.xlsx"
 BRIDGE_MATRICES_FILE = POST_PROCESSING_DIR / "bridge_matrices.xlsx"
+# Sheets "M" / "M_split" of bridge_matrices.xlsx (io.load_bridge_m_matrix):
+# column of the product names, and expected number of EXIOBASE products.
+BRIDGE_M_SECTOR_COLUMN = "sector"
+N_PRODUCTS = 200
 BOUNDARIES_FILE = BOUNDARIES_DIR / "boundaries_values.xlsx"
 BUDGET_SHARES_FILE = BOUNDARIES_DIR / "budget_shares.xlsx"
 
@@ -311,10 +315,9 @@ DEFAULT_SCENARIO_POPULATION_PERIOD = "2050"
 
 BUDGET_SHARES_SHEET = "Budget_shares_regions"
 
-# Every sheet of budget_shares.xlsx starts with a title and two note rows: the
-# actual header row ("EXIOBASE code", "Region", "EPC share ref. ...") is the 4th.
-BUDGET_SHARES_HEADER_ROW = 3
-
+# Every sheet of budget_shares.xlsx starts with title and note rows: the actual
+# header row is found by content, as the first one holding the two columns
+# below (io._read_budget_shares_sheet), not by a fixed position.
 # Column used as index (EXIOBASE region code: FR, EU27, W, CN...) and region name.
 BUDGET_SHARE_CODE_COLUMN = "EXIOBASE code"
 BUDGET_SHARE_REGION_COLUMN = "Region"

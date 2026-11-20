@@ -72,15 +72,22 @@ def filter_and_weight(df, extension_factor_map):
     """Filter the rows of `df` whose index (1st level if MultiIndex) is a key
     of `extension_factor_map`, and multiply them by the matching factor.
 
+    Vectorized: the factors are aligned on the stressor of each row
+    (Series.reindex), then the retained rows are multiplied by them in one
+    operation. Duplicated stressors in the index are each weighted.
+
     Returns:
-        pd.DataFrame: the retained weighted rows (may be empty).
+        pd.DataFrame: the retained weighted rows, in their original order and
+        with their original index (may be empty).
     """
-    weighted_rows = [
-        row * extension_factor_map[idx[0] if isinstance(idx, tuple) else idx]
-        for idx, row in df.iterrows()
-        if (idx[0] if isinstance(idx, tuple) else idx) in extension_factor_map
-    ]
-    return pd.DataFrame(weighted_rows) if weighted_rows else pd.DataFrame()
+    if df is None or df.empty or not extension_factor_map:
+        return pd.DataFrame()
+    stressors = df.index.get_level_values(0) if isinstance(df.index, pd.MultiIndex) else df.index
+    keep = stressors.isin(list(extension_factor_map))
+    if not keep.any():
+        return pd.DataFrame()
+    factors = pd.Series(extension_factor_map, dtype=float).reindex(stressors[keep])
+    return df[keep].mul(factors.to_numpy(), axis=0)
 
 
 def filter_and_weight_vector(df, extension_factor_map):

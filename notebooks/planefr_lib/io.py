@@ -35,6 +35,41 @@ def _normalize_label(label):
     return re.sub(r"\s+", " ", label).strip() if isinstance(label, str) else label
 
 
+def _find_header_row(file, sheet_name, labels, max_rows=30):
+    """0-based index of the first row of the sheet containing all `labels`
+    (compared after _normalize_label), among the first max_rows rows.
+
+    Used instead of a fixed header=<n>: adding or removing a title/note row
+    above a table no longer shifts the columns. Raises a ValueError naming the
+    file and the sheet if the header is not found (rather than reading the
+    wrong row silently)."""
+    raw = pd.read_excel(file, sheet_name=sheet_name, header=None, nrows=max_rows)
+    wanted = {_normalize_label(label) for label in labels}
+    for i, row in raw.iterrows():
+        if wanted <= {_normalize_label(v) for v in row if isinstance(v, str)}:
+            return i
+    raise ValueError(f"Header row with {sorted(wanted)} not found in the first {max_rows} rows "
+                     f"of sheet '{sheet_name}' of {Path(file).name}")
+
+
+def _read_budget_shares_sheet(sheet_name):
+    """Sheet of budget_shares.xlsx read under its header row (the one holding
+    config.BUDGET_SHARE_CODE_COLUMN and config.BUDGET_SHARE_REGION_COLUMN,
+    found by content: the title/note rows above it may change), restricted to
+    the rows with both a code and a region name -- the notes below the table
+    occupy the code column but not the region one -- and indexed by code."""
+    header = _find_header_row(config.BUDGET_SHARES_FILE, sheet_name,
+                              [config.BUDGET_SHARE_CODE_COLUMN, config.BUDGET_SHARE_REGION_COLUMN])
+    df = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=sheet_name, header=header)
+    df = df[df[config.BUDGET_SHARE_CODE_COLUMN].notna() & df[config.BUDGET_SHARE_REGION_COLUMN].notna()]
+    df = df.set_index(config.BUDGET_SHARE_CODE_COLUMN)
+    df.index = df.index.map(lambda x: str(x).strip())
+    if df.index.duplicated().any():
+        raise ValueError(f"Duplicated region codes in sheet '{sheet_name}' of "
+                         f"{config.BUDGET_SHARES_FILE.name}: {sorted(set(df.index[df.index.duplicated()]))}")
+    return df
+
+
 def load_characterization_factors(scenario_group=None):
     """Characterization factors: one row per (indicator, LP, EXIOBASE stressor),
     with columns config.CF_INDICATOR_COL ("Indicators"), config.CF_LP_COL
@@ -84,13 +119,28 @@ def load_bridge_m_matrix(sheet_name="M"):
     Not to be confused with the 'Alimentation' sheet of the same workbook,
     which is a fine breakdown of food products (rice, beef, pork...).
 
-    The 1st data row of the sheet is a 2nd header row (category /
-    sub_category / sector): the 200 products are on rows 1 to 200."""
-    m_raw = pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name=sheet_name)
+    Read by content, not by position: the header row is the first one holding
+    config.BRIDGE_M_SECTOR_COLUMN ("sector"); the categories are the named
+    columns after it; the products are the rows with a sector name, excluding
+    the 2nd header row (category / sub_category / sector). The number of
+    products (config.N_PRODUCTS, unique names) is checked, so that a row added,
+    removed or moved in the sheet raises an error instead of shifting the
+    mapping."""
+    sector_col = config.BRIDGE_M_SECTOR_COLUMN
+    header = _find_header_row(config.BRIDGE_MATRICES_FILE, sheet_name, [sector_col])
+    m_raw = pd.read_excel(config.BRIDGE_MATRICES_FILE, sheet_name=sheet_name, header=header)
+    position = list(m_raw.columns).index(sector_col)
     # Category columns: those after "sector", excluding empty columns without header.
-    category_cols = [c for c in m_raw.columns[3:] if not str(c).startswith("Unnamed")]
-    bridge_m = m_raw.loc[m_raw.index[1:201], category_cols].copy()
-    bridge_m.index = m_raw.iloc[1:201, 2].values
+    category_cols = [c for c in m_raw.columns[position + 1:] if not str(c).startswith("Unnamed")]
+    sectors = m_raw[sector_col]
+    rows = sectors.notna() & (sectors.map(_normalize_label) != sector_col)
+    bridge_m = m_raw.loc[rows, category_cols].copy()
+    bridge_m.index = sectors[rows].values
+    if len(bridge_m) != config.N_PRODUCTS or bridge_m.index.duplicated().any():
+        raise ValueError(
+            f"Sheet '{sheet_name}' of {config.BRIDGE_MATRICES_FILE.name}: expected {config.N_PRODUCTS} "
+            f"distinct products in column '{sector_col}', found {len(bridge_m)} "
+            f"({bridge_m.index.duplicated().sum()} duplicated)")
     bridge_m = bridge_m.apply(pd.to_numeric, errors="coerce").fillna(0)
     return (bridge_m > 0).astype(int)
 
@@ -130,11 +180,7 @@ def load_population_df():
     2024) in thousands, indexed by EXIOBASE region code (FR, EU27, W...), one
     column per period, renamed to the period itself ("2015", "2019", "2050",
     "2019-2050", "2019-2100": mean over the period)."""
-    df = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=config.POPULATION_SHEET,
-                       header=config.BUDGET_SHARES_HEADER_ROW)
-    df = df[df[config.BUDGET_SHARE_CODE_COLUMN].notna() & df[config.BUDGET_SHARE_REGION_COLUMN].notna()]
-    df = df.set_index(config.BUDGET_SHARE_CODE_COLUMN)
-    df.index = df.index.map(lambda x: str(x).strip())
+    df = _read_budget_shares_sheet(config.POPULATION_SHEET)
     periods = {}
     for col in df.columns:
         match = re.search(config.POPULATION_COLUMN_PATTERN, str(col), flags=re.IGNORECASE)
@@ -224,21 +270,12 @@ def load_budget_shares_df():
     budget going to each EXIOBASE region (+ the EU27 aggregate), indexed by
     region code (config.BUDGET_SHARE_CODE_COLUMN: FR, EU27, W, CN...).
 
-    The title/note rows around the table are discarded (headers read at
-    config.BUDGET_SHARES_HEADER_ROW, then only the rows with both a code and a
-    region name are kept -- the notes below the table occupy the code column
-    but not the region one), and the shares are converted to numbers: the sheet
-    writes "n.a." for the shares that cannot be computed (Taiwan, missing from
-    the World Bank data) and leaves empty the min/max that make no sense ("W"
-    row), which therefore become NaN."""
-    def read(sheet):
-        d = pd.read_excel(config.BUDGET_SHARES_FILE, sheet_name=sheet,
-                          header=config.BUDGET_SHARES_HEADER_ROW)
-        d = d[d[config.BUDGET_SHARE_CODE_COLUMN].notna() & d[config.BUDGET_SHARE_REGION_COLUMN].notna()]
-        d = d.set_index(config.BUDGET_SHARE_CODE_COLUMN)
-        d.index = d.index.map(lambda x: str(x).strip())
-        return d
-
+    The title/note rows around the table are discarded (see
+    _read_budget_shares_sheet: header found by content), and the shares are
+    converted to numbers: the sheet writes "n.a." for the shares that cannot
+    be computed (Taiwan, missing from the World Bank data) and leaves empty the
+    min/max that make no sense ("W" row), which therefore become NaN."""
+    read = _read_budget_shares_sheet
     df = read(config.BUDGET_SHARES_SHEET)
 
     # "UN – EPC <period>" columns of the detailed sheet. This sheet has a World
