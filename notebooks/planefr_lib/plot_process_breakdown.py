@@ -25,6 +25,7 @@ PROCESS_GROUP_MAP = {
     "water": "water",
     "nutrients": "nutrients",
     "air_emissions": "air_emissions",
+    "raw_materials": "raw_materials",
 }
 
 PROCESS_GROUP_LABELS = {
@@ -33,12 +34,12 @@ PROCESS_GROUP_LABELS = {
     "water": "Water Consumption",
     "nutrients": "N & P surpluses",
     "air_emissions": "Other air emissions",
+    "raw_materials": "Raw materials",
 }
 
-# Stacking order (bottom -> top). An LP missing from PROCESS_GROUP_MAP (e.g.
-# raw_materials, unrelated to Biodiversity loss) is grouped under
-# "air_emissions"/"Other", at the top of the stack -- see group_lp_values.
-PROCESS_GROUP_ORDER = ["climate_change", "land", "water", "nutrients", "air_emissions"]
+# Stacking order (bottom -> top). An LP missing from PROCESS_GROUP_MAP is
+# grouped under "air_emissions"/"Other" -- see group_lp_values.
+PROCESS_GROUP_ORDER = ["climate_change", "land", "water", "nutrients", "air_emissions", "raw_materials"]
 
 PROCESS_GROUP_COLORS = {
     "climate_change": "#F57C00",
@@ -46,7 +47,12 @@ PROCESS_GROUP_COLORS = {
     "water": "#5b9bd5",
     "nutrients": "#c8a878",
     "air_emissions": "#4e17d1",
+    "raw_materials": "#9e9e9e",
 }
+
+# A process group appears in the legend only if its share reaches this
+# threshold (%) in at least one scenario.
+LEGEND_MIN_SHARE_PCT = 0.5
 
 
 def group_lp_values(lp_values):
@@ -61,7 +67,8 @@ def group_lp_values(lp_values):
 
 def create_biodiversity_process_contribution(lp_values_by_scenario, scenario_names,
                                              indicator_name="", ax=None, show_legend=True,
-                                             unit="", excel_path=None):
+                                             unit="", excel_path=None,
+                                             legend_min_share=LEGEND_MIN_SHARE_PCT):
     """Stacked bar in % (one per scenario) of the contribution of each process
     group (PROCESS_GROUP_ORDER) to the footprint of indicator_name
     (biodiversity_process_contribution script).
@@ -76,6 +83,8 @@ def create_biodiversity_process_contribution(lp_values_by_scenario, scenario_nam
         excel_path: if given, Excel workbook of the plotted data (see
             figure_export): "Contribution" sheet (value and share of each
             process group, by scenario) and "LP detail" (raw LPs before grouping).
+        legend_min_share: only process groups whose share (%) reaches this
+            value in at least one scenario are shown in the legend.
 
     Returns:
         (fig, ax) if ax=None was given as input, otherwise (None, ax).
@@ -122,9 +131,12 @@ def create_biodiversity_process_contribution(lp_values_by_scenario, scenario_nam
     totals = np.array([sum(g.values()) for g in grouped_by_scenario])
 
     bottom = np.zeros(n_scenarios)
+    legend_groups = []
     for group in PROCESS_GROUP_ORDER:
         heights = np.array([g.get(group, 0.0) for g in grouped_by_scenario])
         heights_pct = np.where(totals > 0, heights / totals * 100, 0)
+        if np.max(np.abs(heights_pct), initial=0) >= legend_min_share:
+            legend_groups.append(group)
         ax.bar(x_pos, heights_pct, bar_width, bottom=bottom,
                label=PROCESS_GROUP_LABELS[group], color=PROCESS_GROUP_COLORS[group],
                edgecolor="white", linewidth=0.5)
@@ -143,8 +155,9 @@ def create_biodiversity_process_contribution(lp_values_by_scenario, scenario_nam
     ax.grid(axis="y", alpha=0.3, linestyle="--")
 
     if show_legend:
-        handles = [Patch(facecolor=PROCESS_GROUP_COLORS[g], edgecolor="white") for g in PROCESS_GROUP_ORDER]
-        labels = [PROCESS_GROUP_LABELS[g] for g in PROCESS_GROUP_ORDER]
+        # Top of the stack first, so the legend reads in the same order as the bars
+        handles = [Patch(facecolor=PROCESS_GROUP_COLORS[g], edgecolor="white") for g in reversed(legend_groups)]
+        labels = [PROCESS_GROUP_LABELS[g] for g in reversed(legend_groups)]
         ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=11)
 
     if fig is not None:

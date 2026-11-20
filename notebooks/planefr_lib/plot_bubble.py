@@ -621,14 +621,37 @@ def load_indicator_tables_excel(excel_path):
 BUBBLE_ROWS = ["M_imp", "M_dom", "M_row", "Y_imp", "Y_dom"]
 
 
+def _parse_n(n):
+    """Number of items to display: (count, coverage).
+
+    n=None -> (None, None): all the items;
+    n=int  -> (n, None): the first n items;
+    n="90%" (str ending with %) -> (None, 0.90): the first items until their
+        cumulative share of the total footprint reaches 90%.
+    """
+    if n is None:
+        return None, None
+    if isinstance(n, str) and n.strip().endswith("%"):
+        coverage = float(n.strip()[:-1]) / 100.0
+        if not 0 < coverage <= 1:
+            raise ValueError(f"n coverage must be in ]0%, 100%], got {n!r}")
+        return None, coverage
+    if isinstance(n, (int, np.integer)) and not isinstance(n, bool) and n > 0:
+        return int(n), None
+    raise ValueError(f"n must be None, a positive int or a percentage string such as '90%', got {n!r}")
+
+
 def select_bubble_items(sheet, type="categories", n=None, sort_row=None):
     """Columns to plot for a sheet read back by load_indicator_tables_excel.
 
     type="categories": the first n consumption categories;
     type="products"  : the first n sectors.
-    n=None: all of them. In both cases, columns in decreasing order of
-    `sort_row` (None: the sort row of the sheet, B1), ties in bridge order
-    (same rule as the RANK + COUNTIF of the workbook).
+    n=None: all of them; n=int: the first n; n="90%": the first items until
+    their cumulative share of the total footprint (TOTAL_FOOTPRINT_ROW, same
+    share as the bars) reaches 90% -- so the number of items varies by
+    indicator. In all cases, columns in decreasing order of `sort_row` (None:
+    the sort row of the sheet, B1), ties in bridge order (same rule as the
+    RANK + COUNTIF of the workbook).
 
     Returns:
         DataFrame rows BUBBLE_ROWS x selected columns.
@@ -643,7 +666,18 @@ def select_bubble_items(sheet, type="categories", n=None, sort_row=None):
     if sort_row not in table.index:
         raise ValueError(f"Unknown sort_row: {sort_row!r} (expected: {list(table.index)})")
     order = np.argsort(-table.loc[sort_row].to_numpy(dtype=float), kind="stable")
-    return table.iloc[:, order[:n]].loc[BUBBLE_ROWS]
+    ordered = table.iloc[:, order]
+    count, coverage = _parse_n(n)
+    if coverage is not None:
+        # Same total as the share bars (_shares): sum over all the sectors
+        total = float(sheet["sector_table"].loc[TOTAL_FOOTPRINT_ROW].sum())
+        count = None  # coverage never reached (or total <= 0): all the items
+        if total > 0:
+            cumulative = np.nancumsum(ordered.loc[TOTAL_FOOTPRINT_ROW].to_numpy(dtype=float)) / total
+            reached = np.flatnonzero(cumulative >= coverage - 1e-9)
+            if reached.size:
+                count = int(reached[0]) + 1
+    return ordered.iloc[:, :count].loc[BUBBLE_ROWS]
 
 
 def scale_bubble_sizes(values, scale=BUBBLE_SCALE, min_size=BUBBLE_MIN_SIZE, ref_max=None):
@@ -757,7 +791,13 @@ def _style_x_axis(ax, x_pos, items, type):
 
 def _figure_subject(type, n, sort_row):
     items = "consumption categories" if type == "categories" else "sectors"
-    subject = f"{items} per indicator" if n is None else f"top {n} {items} per indicator"
+    count, coverage = _parse_n(n)
+    if coverage is not None:
+        subject = f"first {items} covering {coverage:.0%} of the footprint, per indicator"
+    elif count is not None:
+        subject = f"top {count} {items} per indicator"
+    else:
+        subject = f"{items} per indicator"
     return f"{subject} (sorted by: {sort_row})"
 
 
@@ -809,7 +849,10 @@ def create_driver_comparison(base_excel_path, type="categories", n=None, scenari
             indicator; "products" -> the first `n` sectors of each indicator.
             In both cases, in decreasing order of the sort row (see sort_row),
             the same for all the indicators, recalled in the figure title.
-        n: number of categories / sectors displayed (None: all).
+        n: categories / sectors displayed: None (all), an int (the first n)
+            or a percentage string such as "90%" (the first items until
+            they cover 90% of the indicator's total footprint; the number
+            then varies by indicator).
         sort_row: row of the tables used to sort the items of every indicator
             (e.g. "d_cba", "M_row", "Y_dom"...). None: the row chosen in B1 of
             the baseline workbook (editable by hand in Excel), which must then
