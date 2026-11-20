@@ -943,12 +943,6 @@ The same sheet contains the unit-conversion rows:
 
 The `Equality…` rows are formulas linked to `budget_shares.xlsx`: global budget × France share of the `Budget_shares_variants` sheet (`UN – EPC 2019-2100` for GHG, `UN – EPC 2050` otherwise) for the absolute rows, and population of the `Population` sheet for the `(p.cap)` rows. These links are by cell reference: moving rows or columns in `budget_shares.xlsx`, or renaming its sheets, breaks them.
 
-**Reading the workbooks by content.** The tables of `budget_shares.xlsx`, of the `M` / `M_split` sheets of `bridge_matrices.xlsx` and of `my_manual_param.xlsx` are located by their labels, not by fixed positions:
-- `budget_shares.xlsx` (`io._read_budget_shares_sheet`): the header row is the first one holding `EXIOBASE code` and `Region`; title or note rows can be added or removed above it. A duplicated region code raises an error.
-- `M` / `M_split` (`io.load_bridge_m_matrix`): the header row is the first one holding `sector`; the categories are the named columns after it, the products the rows with a sector name. Exactly `config.N_PRODUCTS` (200) distinct products are required, otherwise an error is raised.
-- `my_manual_param.xlsx` (`compute_ds_x_dom.load_manual_shocks`): the field row is the first one holding `variable` and `row_name`; the scenario columns are found by their name (`S1`…`TEND`) above it, in any order. A missing or duplicated scenario raises an error.
-
-These reads are tested in `Module_PlaneFR/tests/test_io.py` and `planeFR/scripts/tests/test_shocks.py` (§ 11).
 
 #### From global to national budget
 
@@ -992,7 +986,7 @@ The shares are computed country by country, then summed by region. Historical da
 
 #### Social floor
 
-The `DLS` sheet of `boundaries_values.xlsx` gives a decent-living-standards floor for three indicatores (GHG emissions, Agricultural land, Raw material consumption), per capita and nationally. The rows are chosen per scenario, whatever its group (`config.is_base_year_scenario`, pattern `config.BASE_YEAR_SCENARIO_PATTERN`): the "DLS" rows for the base-year scenarios (`2015`, `2019`, `Base_year_*`, `2019_*`), the "DLS 2050" rows for the others. When a figure mixes both kinds, the base-year DLS is drawn on the base-year bars only and the DLS 2050 on the others; when all its scenarios are of the same kind, the three levels (DLS, lower and upper bounds) are drawn on every bar. Only the national values are read by the code; a missing level (e.g. lower or upper bound) is not drawn.
+The `DLS` sheet of `boundaries_values.xlsx` gives a decent-living-standards floor for three indicatores (GHG emissions, Agricultural land, Raw material consumption), per capita and nationally. The rows are chosen per scenario, whatever its group (`config.is_base_year_scenario`, pattern `config.BASE_YEAR_SCENARIO_PATTERN`): the "DLS" rows for the base-year scenarios (`2015`, `2019`), the "DLS 2050" rows for the others. When a figure mixes both kinds, the base-year DLS is drawn on the base-year bars only and the DLS 2050 on the others; when all its scenarios are of the same kind, the three levels (DLS, lower and upper bounds) are drawn on every bar. Only the national values are read by the code; a missing level (e.g. lower or upper bound) is not drawn.
 
 ### 7.5 Notebooks and figures
 
@@ -1014,11 +1008,11 @@ Every figure function takes an `excel_path` argument. When it is given, the func
 
 `Untitled-1.ipynb` is a draft.
 
-**Stacked bars and synthesis by indicator.** One bar per scenario, stacked by consumption category, domestic part solid and imported part hatched. The synthesis in absolute values shows the three boundary levels, the social floor, the PBA value and the change relative to the reference scenario.
+**Stacked bars and synthesis by indicator.** One bar per scenario, stacked by consumption category, domestic part solid and imported part hatched. The synthesis shows the three boundary levels, the social floor, the PBA value and the change relative to the reference scenario.
 
 **Radial wheel.** One sector per indicator, one bar per scenario. The height of a bar is the ratio of the footprint to the national "Safe Boundary", which therefore forms a circle of constant radius. `show_cba` and `show_pba` choose the accounting displayed. The `Bdf` parameter replaces the scenarios by household categories (§ 8).
 
-**Overshoot of the safe operating space, by region.** One row per indicator, one bubble per scenario, positioned in multiples of the budget. `create_multi_regions_synthesis` works in absolute values and gives each country or region its own budget share, deduced from the region code in the folder name (`processing.resolve_region_code`). A name without a region code is treated as France. With `sensitivity=True`, a segment spans the overshoot levels obtained with the min and max shares; for the World (share 1), it is obtained per capita over the population periods 2019, 2019-2050 and 2019-2100 (`config.WORLD_SENSITIVITY_POPULATION_PERIODS`, `processing.compute_world_period_budget`), which requires `pop_df`. The notebook currently calls it with `sharing_principle="CTR"`. Its group is `REGIONS` (France, EU27, World, RoW Africa in 2019), or `REGIONS_agri` (`AGRI = True` in `All.ipynb`, which switches both displayed groups to their `_agri` variant) for the same geographies restricted to the agri-food system (§ 5.4); like any group ending in `_agri`, the latter reads the `Agri` sheets of `indicator_computing.xlsx` and `boundaries_values.xlsx`.
+**Overshoot of the safe operating space, by region.** One row per indicator, one bubble per region, positioned in multiples of the budget. `create_multi_regions_synthesis` works in absolute values and gives each country or region its own budget share, deduced from the region code in the folder name (`processing.resolve_region_code`). With `sensitivity=True`, a segment spans the overshoot levels obtained with the min and max shares; The notebook currently calls it with `sharing_principle="CTR"`. Its group is `REGIONS`.
 
 **Intensities by product.** The notebook works in two steps. It first exports one workbook per scenario (`export_indicator_tables_excel`), with one sheet per indicator. It then plots the bubbles by reading these workbooks back (`create_driver_comparison`).
 
@@ -1033,27 +1027,13 @@ Each sheet has the same rows for the consumption categories and for the products
 | `Y_imp`, `Y_dom` | Final demand without GFCF or exports | Sum |
 | `M*Y` rows | Products and their sums, the last one being the total footprint | Exact sum over the sectors |
 
-`S_dom` is read in `dom_<lp>/S_x_dom.pkl`, or computed as `F_x_dom / x_dom` when an extension has no `S_x_dom.pkl` (`ghg_combustion`, `raw_materials`, whose `F_x_dom` is by sector since § 5.3), and characterized like `M`. For a category, `F_x_dom = S_dom × x_dom` is therefore the sum of the direct pressures of its sectors.
-
-In `M_split`, each product belongs to a single category, so the category columns add up to the sector columns. The 31 energy products (electricity, fuels, gas, heat) are assigned to the category whose column of `Y` dominates their French final demand (2015, without GFCF or exports):
-
-| Category | Products | Basis |
-|---|---|---|
-| Housing | Anthracite, Other Bituminous Coal, Patent Fuel, natural gas, Kerosene (lamp/heating kerosene), LPG, the 12 electricity products, transmission and distribution of electricity, distribution of gaseous fuels, steam and hot water | 100 % `Households Residential` (steam: 85 %); electricity products without final demand follow the others |
-| Mobility | Motor Gasoline, Aviation Gasoline, Kerosene Type Jet Fuel, Gas/Diesel Oil, Heavy Fuel Oil, Biogasoline, Biodiesels | 100 % `Households Transport` (Gas/Diesel Oil: 70 %, the 30 % of heating oil follow) |
-| Final goods nec | Coke Oven Coke, Refinery Feedstocks | Intermediate products, no significant final demand |
-
-The `M` sheet still assigns these 31 products to two or three categories (Housing, Mobility, Final goods), each counting them in full: with `BRIDGE_SHEET = "M"`, the sum over the category columns exceeds the sum over the sectors, and totals must be taken on the sectors. The two sectors of `plot_bubble.EXCLUDED_SECTORS` (outlier `M_row` intensities) are removed from the sector columns and from the category aggregates.
-
-The top of the sheet holds the two sorted tables (formulas), each followed by the share (%) of the sort row within its block. The bottom holds the source data (values, bridge order), with the `Sort key` and `Rank` computation rows of each block. The sort row is chosen in cell B1 (drop-down list, editable in Excel) and applies to both blocks; when read back, only the source blocks are used, so the workbook can be read whether or not Excel has recomputed it. A workbook in the earlier layout (categories after the sectors on the same rows) is still read, but flagged as out of date: the notebooks then regenerate it, even with `OVERWRITE_EXCEL = False`.
-
-The chart shows, for each indicator, the first `N` consumption categories (`type="categories"`) or the first `N` sectors (`type="products"`) in the order of the sort row; `N = None` shows them all (parameter `n` of `create_driver_comparison`). The grouping sheet of `bridge_matrices.xlsx` is `M` (5 categories: Food, Housing, Mobility, Final goods, Final services) or `M_split` (14 categories: Cereals; Vegetables, fruits, nuts; Oil and fats; Agri-food nec; Meat cattle; Dairy Products; Animal products nec; Sugar, Beverages & Tobacco; Housing; Mobility; Textiles; Final goods nec; Hotel & restaurant; Final services).
+The chart shows, for each indicator, the first `N` consumption categories (`type="categories"`) or the first `N` sectors (`type="products"`) in the order of the sort row; The grouping sheet of `bridge_matrices.xlsx` is `M_split`.
 
 ---
 
 ## 8. Breakdown by household category: ademe_eemrio
 
-This chain splits the consumption footprint of a scenario between household categories, in proportion to their expenditure observed in the 2017 Budget de famille survey. The `ademe_eemrio` repository predates the project: the imputation notebook and the chart notebooks were already there. PlaneFR adds two scripts and an orchestration script. The repository's own files and output sheet names are in French.
+This chain splits the consumption footprint of a scenario between household categories, in proportion to their expenditure observed in the 2017 Budget de famille survey. The `ademe_eemrio` repository predates the project: the imputation notebook and the chart notebooks were already there. PlaneFR adds two scripts and an orchestration script.
 
 | File | Status | Role |
 |---|---|---|
@@ -1062,8 +1042,6 @@ This chain splits the consumption footprint of a scenario between household cate
 | `imputation_impacts.ipynb` | Pre-existing | Imputation to households |
 | [agregation_impacts_facteurs.py](../../Github/ademe_eemrio/agregation_impacts_facteurs.py) | Added by PlaneFR | Aggregation by household category |
 | [BdF.ps1](../../Github/ademe_eemrio/BdF.ps1) | Added by PlaneFR, not tracked by git | Runs the three steps for each scenario of a display group (`BdF` by default) |
-
-At the time of writing, `BdF.ps1` is not committed, and `agregation_impacts_facteurs.py`, `export_impacts_coicop.py` and `imputation_impacts.ipynb` have uncommitted local changes.
 
 ### Steps
 
@@ -1203,17 +1181,12 @@ The repositories only hold code and parameters: no model results (`Module_PlaneF
 
 | Input | Location | Source |
 |---|---|---|
-| EXIOBASE 3.11.2 archives `IOT_2015_pxp.zip`, `IOT_2019_pxp.zip` | `01-sources_public/exiobase/3.11.2/` | Public, Zenodo (DOI `10.5281/zenodo.23039074`) |
 | ADEME France calibration `3.10.2_France_2015`, `3.10.2_France_2019` | `3-workshops/1-accounts/MatMat/` | Not public: ask the maintainers |
 | Transition(s) 2050 system shocks | `4-PlaneFR/2-shocks/1-transitions_2050/<scenario>/system/` | Not public: ask the maintainers |
 | `datapack` folder (wheel `matmat-0.9.0b0`, the only one with `update_calib_fr`) | `MatMat/datapack/` | Not public: ask the maintainers |
 
 5. **Run the whole pipeline**: `planefr.py --All`, then `planefr.py --Agri` for the agri-food variant (next section). This is long: every account, shock and output is rebuilt.
 6. **Run the notebooks** (§ 7.5) to produce the figures, and `BdF.ps1` in `ademe_eemrio` (§ 8) for the household breakdown.
-
-Before running anything, `uv run pytest planeFR/scripts/tests` (from `matmat-ademe`) checks the pipeline command without these inputs.
-
-> **Note.** The history of `Module_PlaneFR` was rewritten on 20 November 2026 to remove results and figures (§ 2). A clone made before that date must not be pulled: clone again, or run `git fetch` then `git reset --hard origin/main`.
 
 ### Rerunning all the computations
 
